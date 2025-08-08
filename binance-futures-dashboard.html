@@ -1,0 +1,1535 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>바이낸스 선물 대시보드</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0b0e11;
+            color: #ffffff;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #f0b90b;
+        }
+
+        .symbol-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .symbol-selector label {
+            font-weight: 500;
+        }
+
+        select {
+            background: #1e2329;
+            border: 1px solid #474d57;
+            color: #ffffff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            min-width: 150px;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #f0b90b;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff6b6b;
+        }
+
+        .status-dot.connected {
+            background: #51cf66;
+        }
+
+        .charts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .chart-section {
+            background: #1e2329;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #2b3139;
+        }
+
+        .chart-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #ffffff;
+        }
+
+        .price-chart {
+            height: 400px;
+            width: 100%;
+        }
+
+        .volume-chart {
+            height: 200px;
+            width: 100%;
+        }
+
+        .ratio-chart {
+            height: 200px;
+            width: 100%;
+        }
+        
+        .liquidation-chart {
+            height: 150px;
+            width: 100%;
+        }
+
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            font-size: 16px;
+            color: #8c8c8c;
+        }
+
+        .spinner {
+            border: 3px solid #2b3139;
+            border-top: 3px solid #f0b90b;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            background: #2b3139;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #8c8c8c;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .stat-value.positive {
+            color: #02c076;
+        }
+
+        .stat-value.negative {
+            color: #f84960;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .title {
+                font-size: 20px;
+            }
+            
+            .price-chart {
+                height: 300px;
+            }
+            
+            .volume-chart {
+                height: 150px;
+            }
+            
+            .ratio-chart {
+                height: 150px;
+            }
+            
+            .liquidation-chart {
+                height: 120px;
+            }
+            
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="title">바이낸스 선물 대시보드</h1>
+            <div class="symbol-selector">
+                <label for="symbolSelect">심볼:</label>
+                <select id="symbolSelect" disabled>
+                    <option>로딩 중...</option>
+                </select>
+            </div>
+            <div class="status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">연결 중...</span>
+            </div>
+        </div>
+
+        <div class="stats" id="stats" style="display: none;">
+            <div class="stat-item">
+                <div class="stat-label">현재 가격</div>
+                <div class="stat-value" id="currentPrice">-</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">1분봉 변동률</div>
+                <div class="stat-value" id="priceChange">-</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">현재 테이커 비율</div>
+                <div class="stat-value" id="currentRatio">-</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">거래량 (USDT)</div>
+                <div class="stat-value" id="volume">-</div>
+            </div>
+        </div>
+
+        <div class="charts-container">
+            <div class="chart-section">
+                <div class="chart-title">실시간 가격 차트 (1분 캔들)</div>
+                <div id="priceChart" class="price-chart">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        데이터를 불러오는 중...
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">거래량 (🟢매수 vs 🔴매도)</div>
+                <div id="volumeChart" class="volume-chart">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        데이터를 불러오는 중...
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">테이커 매수 비율</div>
+                <div id="ratioChart" class="ratio-chart">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        데이터를 불러오는 중...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-section">
+                <div class="chart-title">강제청산 (🔴LONG vs 🟢SHORT)</div>
+                <div id="liquidationChart" class="liquidation-chart">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        강제청산 데이터를 불러오는 중...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class BinanceFuturesDashboard {
+            constructor() {
+                this.currentSymbol = null;
+                this.priceWs = null;
+                this.tradeWs = null;
+                this.liquidationWs = null;
+                this.priceChart = null;
+                this.volumeChart = null;
+                this.ratioChart = null;
+                this.liquidationChart = null;
+                this.candlestickSeries = null;
+                this.takerVolumeSeries = null;
+                this.makerVolumeSeries = null;
+                this.ratioSeries = null;
+                this.longLiquidationSeries = null;
+                this.shortLiquidationSeries = null;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 5;
+                this.reconnectDelay = 1000;
+                this.reconnectTimeouts = new Set(); // 재연결 타이머 관리
+                this.isConnecting = false; // 연결 중 상태 플래그
+                
+                // 테이커 비율 계산을 위한 데이터
+                this.currentMinuteData = {
+                    timestamp: null,
+                    takerBuyQuoteVolume: 0,
+                    totalQuoteVolume: 0
+                };
+                
+                // 테이커 비율 캔들 데이터 저장
+                this.currentRatioCandle = {
+                    timestamp: null,
+                    open: null,
+                    high: null,
+                    low: null,
+                    close: null
+                };
+                
+                // 거래량 누산 데이터
+                this.currentVolumeData = {
+                    timestamp: null,
+                    takerVolume: 0,    // 테이커(매수자) 거래량
+                    makerVolume: 0     // 마켓메이커(매도자) 거래량
+                };
+                
+                // 강제청산 누산 데이터
+                this.currentLiquidationData = {
+                    timestamp: null,
+                    longLiquidation: 0,    // LONG 포지션 강제청산
+                    shortLiquidation: 0    // SHORT 포지션 강제청산
+                };
+                
+                this.init();
+            }
+
+            async init() {
+                await this.loadSymbols();
+                this.setupEventListeners();
+                this.initializeCharts();
+            }
+
+            async loadSymbols() {
+                try {
+                    const response = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
+                    const data = await response.json();
+                    
+                    const symbolSelect = document.getElementById('symbolSelect');
+                    symbolSelect.innerHTML = '<option value="">심볼을 선택하세요</option>';
+                    
+                    // USDT 마진 선물만 필터링
+                    const usdtSymbols = data.symbols
+                        .filter(symbol => symbol.status === 'TRADING' && symbol.quoteAsset === 'USDT')
+                        .sort((a, b) => a.symbol.localeCompare(b.symbol));
+                    
+                    usdtSymbols.forEach(symbol => {
+                        const option = document.createElement('option');
+                        option.value = symbol.symbol;
+                        option.textContent = symbol.symbol;
+                        symbolSelect.appendChild(option);
+                    });
+                    
+                    symbolSelect.disabled = false;
+                    
+                    // 기본적으로 BTCUSDT 선택
+                    if (usdtSymbols.find(s => s.symbol === 'BTCUSDT')) {
+                        symbolSelect.value = 'BTCUSDT';
+                        this.onSymbolChange('BTCUSDT');
+                    }
+                    
+                } catch (error) {
+                    console.error('심볼 로딩 실패:', error);
+                    this.updateStatus('심볼 로딩 실패', false);
+                }
+            }
+
+            setupEventListeners() {
+                const symbolSelect = document.getElementById('symbolSelect');
+                symbolSelect.addEventListener('change', (e) => {
+                    if (e.target.value) {
+                        this.onSymbolChange(e.target.value);
+                    }
+                });
+            }
+
+            initializeCharts() {
+                // 가격 차트 초기화
+                this.priceChart = LightweightCharts.createChart(document.getElementById('priceChart'), {
+                    width: document.getElementById('priceChart').offsetWidth,
+                    height: 400,
+                    layout: {
+                        background: { color: '#1e2329' },
+                        textColor: '#d1d4dc',
+                    },
+                    grid: {
+                        vertLines: { color: '#2b3139' },
+                        horzLines: { color: '#2b3139' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    },
+                    rightPriceScale: {
+                        borderColor: '#485158',
+                    },
+                    timeScale: {
+                        borderColor: '#485158',
+                        timeVisible: true,
+                        secondsVisible: false,
+                    },
+                });
+
+                this.candlestickSeries = this.priceChart.addSeries(LightweightCharts.CandlestickSeries, {
+                    upColor: '#02c076',
+                    downColor: '#f84960',
+                    borderDownColor: '#f84960',
+                    borderUpColor: '#02c076',
+                    wickDownColor: '#f84960',
+                    wickUpColor: '#02c076',
+                });
+
+                // 테이커 비율 차트 초기화
+                this.ratioChart = LightweightCharts.createChart(document.getElementById('ratioChart'), {
+                    width: document.getElementById('ratioChart').offsetWidth,
+                    height: 200,
+                    layout: {
+                        background: { color: '#1e2329' },
+                        textColor: '#d1d4dc',
+                    },
+                    grid: {
+                        vertLines: { color: '#2b3139' },
+                        horzLines: { color: '#2b3139' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    },
+                    rightPriceScale: {
+                        borderColor: '#485158',
+                        scaleMargins: {
+                            top: 0.1,
+                            bottom: 0.1,
+                        },
+                    },
+                    timeScale: {
+                        borderColor: '#485158',
+                        timeVisible: true,
+                        secondsVisible: false,
+                    },
+                });
+
+                this.ratioSeries = this.ratioChart.addSeries(LightweightCharts.LineSeries, {
+                    color: '#f0b90b',
+                    lineWidth: 2,
+                    priceFormat: {
+                        type: 'custom',
+                        minMove: 0.001,
+                        formatter: (price) => {
+                            return (price * 100).toFixed(1) + '%';
+                        },
+                    },
+                });
+
+                // 거래량 차트 초기화
+                this.volumeChart = LightweightCharts.createChart(document.getElementById('volumeChart'), {
+                    width: document.getElementById('volumeChart').offsetWidth,
+                    height: 200,
+                    layout: {
+                        background: { color: '#1e2329' },
+                        textColor: '#d1d4dc',
+                    },
+                    grid: {
+                        vertLines: { color: '#2b3139' },
+                        horzLines: { color: '#2b3139' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    },
+                    rightPriceScale: {
+                        borderColor: '#485158',
+                        scaleMargins: {
+                            top: 0.1,
+                            bottom: 0.1,
+                        },
+                    },
+                    timeScale: {
+                        borderColor: '#485158',
+                        timeVisible: true,
+                        secondsVisible: false,
+                    },
+                });
+
+                // 테이커 거래량 시리즈 (매수자)
+                this.takerVolumeSeries = this.volumeChart.addSeries(LightweightCharts.HistogramSeries, {
+                    color: '#02c076',
+                    priceFormat: {
+                        type: 'volume',
+                    },
+                });
+
+                // 마켓메이커 거래량 시리즈 (매도자) - 음수로 표시
+                this.makerVolumeSeries = this.volumeChart.addSeries(LightweightCharts.HistogramSeries, {
+                    color: '#f84960',
+                    priceFormat: {
+                        type: 'volume',
+                    },
+                });
+
+                // 강제청산 차트 초기화
+                this.liquidationChart = LightweightCharts.createChart(document.getElementById('liquidationChart'), {
+                    width: document.getElementById('liquidationChart').offsetWidth,
+                    height: 150,
+                    layout: {
+                        background: { color: '#1e2329' },
+                        textColor: '#d1d4dc',
+                    },
+                    grid: {
+                        vertLines: { color: '#2b3139' },
+                        horzLines: { color: '#2b3139' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    },
+                    rightPriceScale: {
+                        borderColor: '#485158',
+                        scaleMargins: {
+                            top: 0.1,
+                            bottom: 0.1,
+                        },
+                    },
+                    timeScale: {
+                        borderColor: '#485158',
+                        timeVisible: true,
+                        secondsVisible: false,
+                    },
+                });
+
+                // LONG 포지션 강제청산 시리즈 (빨간색, 음수로 표시)
+                this.longLiquidationSeries = this.liquidationChart.addSeries(LightweightCharts.HistogramSeries, {
+                    color: '#f84960',
+                    priceFormat: {
+                        type: 'volume',
+                    },
+                });
+
+                // SHORT 포지션 강제청산 시리즈 (초록색, 양수로 표시)
+                this.shortLiquidationSeries = this.liquidationChart.addSeries(LightweightCharts.HistogramSeries, {
+                    color: '#02c076',
+                    priceFormat: {
+                        type: 'volume',
+                    },
+                });
+
+                // 차트 시간축 동기화 설정
+                this.setupTimeScaleSync();
+
+                // 차트 리사이즈 처리
+                window.addEventListener('resize', () => {
+                    if (this.priceChart) {
+                        this.priceChart.applyOptions({
+                            width: document.getElementById('priceChart').offsetWidth
+                        });
+                    }
+                    if (this.volumeChart) {
+                        this.volumeChart.applyOptions({
+                            width: document.getElementById('volumeChart').offsetWidth
+                        });
+                    }
+                    if (this.ratioChart) {
+                        this.ratioChart.applyOptions({
+                            width: document.getElementById('ratioChart').offsetWidth
+                        });
+                    }
+                });
+            }
+
+            setupTimeScaleSync() {
+                // 기존 동기화 해제
+                this.cleanupTimeScaleSync();
+                
+                // 시간축 동기화를 위한 변수들
+                this.isSyncing = false;
+                this.charts = [
+                    { chart: this.priceChart, name: 'price' },
+                    { chart: this.volumeChart, name: 'volume' },
+                    { chart: this.ratioChart, name: 'ratio' },
+                    { chart: this.liquidationChart, name: 'liquidation' }
+                ];
+                this.syncIntervals = [];
+                
+                // 각 차트에 마우스 이벤트 리스너 추가
+                this.charts.forEach((chartInfo, index) => {
+                    const chart = chartInfo.chart;
+                    if (chart && chart.timeScale) {
+                        const chartElement = chart.chartElement ? chart.chartElement() : 
+                                           document.getElementById(chartInfo.name === 'price' ? 'priceChart' : 
+                                                                 chartInfo.name === 'volume' ? 'volumeChart' : 
+                                                                 chartInfo.name === 'ratio' ? 'ratioChart' : 'liquidationChart');
+                        
+                        if (chartElement) {
+                            // 마우스 이벤트로 시간축 변경 감지
+                            const syncHandler = () => {
+                                if (this.isSyncing) return;
+                                
+                                this.isSyncing = true;
+                                
+                                try {
+                                    const visibleRange = chart.timeScale().getVisibleLogicalRange();
+                                    if (visibleRange) {
+                                        // 다른 차트들에 동일한 범위 적용
+                                        this.charts.forEach((otherChartInfo, otherIndex) => {
+                                            if (otherIndex !== index && otherChartInfo.chart && otherChartInfo.chart.timeScale) {
+                                                try {
+                                                    otherChartInfo.chart.timeScale().setVisibleLogicalRange(visibleRange);
+                                                } catch (error) {
+                                                    console.debug(`${otherChartInfo.name} 차트 동기화 실패:`, error.message);
+                                                }
+                                            }
+                                        });
+                                    }
+                                } catch (error) {
+                                    console.debug('시간축 범위 가져오기 실패:', error.message);
+                                }
+                                
+                                setTimeout(() => {
+                                    this.isSyncing = false;
+                                }, 50);
+                            };
+                            
+                            // 마우스 이벤트 등록
+                            chartElement.addEventListener('wheel', syncHandler);
+                            chartElement.addEventListener('mouseup', syncHandler);
+                            chartElement.addEventListener('touchend', syncHandler);
+                            
+                            // 정리를 위해 저장
+                            this.syncIntervals.push({
+                                element: chartElement,
+                                handler: syncHandler,
+                                cleanup: () => {
+                                    chartElement.removeEventListener('wheel', syncHandler);
+                                    chartElement.removeEventListener('mouseup', syncHandler);
+                                    chartElement.removeEventListener('touchend', syncHandler);
+                                }
+                            });
+                        }
+                    }
+                });
+                
+                console.log('차트 시간축 동기화 설정 완료 (Context7 호환)');
+            }
+
+            cleanupTimeScaleSync() {
+                // 기존 이벤트 리스너 해제
+                if (this.syncIntervals && this.syncIntervals.length > 0) {
+                    this.syncIntervals.forEach(syncInfo => {
+                        if (syncInfo.cleanup && typeof syncInfo.cleanup === 'function') {
+                            syncInfo.cleanup();
+                        }
+                    });
+                    this.syncIntervals = [];
+                    console.log('시간축 동기화 이벤트 리스너 해제 완료');
+                }
+                
+                // 이전 구독 방식도 정리 (하위 호환성)
+                if (this.timeScaleSubscriptions && this.timeScaleSubscriptions.length > 0) {
+                    this.timeScaleSubscriptions.forEach(unsubscribe => {
+                        if (typeof unsubscribe === 'function') {
+                            unsubscribe();
+                        }
+                    });
+                    this.timeScaleSubscriptions = [];
+                }
+            }
+
+            async onSymbolChange(symbol) {
+                if (this.currentSymbol === symbol || this.isConnecting) return;
+                
+                // 연결 중 상태로 설정
+                this.isConnecting = true;
+                
+                // 이전 심볼 정리
+                await this.cleanupPreviousSymbol();
+                
+                this.currentSymbol = symbol;
+                document.getElementById('stats').style.display = 'none';
+                this.updateStatus('과거 데이터 로딩 중...', false);
+                
+                try {
+                    // 과거 데이터 먼저 로드
+                    await this.loadHistoricalData();
+                    
+                    this.updateStatus('실시간 연결 중...', false);
+                    await this.connectWebSockets();
+                    
+                    // 시간축 동기화 재설정
+                    this.setupTimeScaleSync();
+                    
+                } catch (error) {
+                    console.error('심볼 변경 오류:', error);
+                    this.updateStatus('연결 실패', false);
+                } finally {
+                    this.isConnecting = false;
+                }
+            }
+
+            async cleanupPreviousSymbol() {
+                // 모든 재연결 타이머 취소
+                this.reconnectTimeouts.forEach(timeoutId => {
+                    clearTimeout(timeoutId);
+                });
+                this.reconnectTimeouts.clear();
+                
+                // WebSocket 연결 정리
+                this.closeWebSockets();
+                
+                // 시간축 동기화 해제
+                this.cleanupTimeScaleSync();
+                
+                // 차트 데이터 정리
+                this.clearCharts();
+                
+                // 상태 데이터 초기화
+                this.resetMinuteData();
+                this.reconnectAttempts = 0;
+                
+                // 약간의 지연을 두어 이전 연결이 완전히 정리되도록 함
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            async loadHistoricalData() {
+                if (!this.currentSymbol) return;
+
+                try {
+                    // 과거 1분 캔들 데이터 가져오기 (최근 100분)
+                    const klineResponse = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${this.currentSymbol}&interval=1m&limit=100`);
+                    const klineData = await klineResponse.json();
+                    
+                    console.log('가격 차트 데이터:', klineData.length, '개 캔들 로딩');
+
+                    // 캔들 데이터 변환 및 설정
+                    const candleData = klineData.map(kline => ({
+                        time: Math.floor(kline[0] / 1000),
+                        open: parseFloat(kline[1]),
+                        high: parseFloat(kline[2]),
+                        low: parseFloat(kline[3]),
+                        close: parseFloat(kline[4])
+                    }));
+
+                    if (this.candlestickSeries && candleData.length > 0) {
+                        this.candlestickSeries.setData(candleData);
+                        
+                        // 차트 시간축을 맞춤
+                        this.priceChart.timeScale().fitContent();
+                        
+                        // 마지막 캔들 정보로 통계 업데이트
+                        const lastCandle = candleData[candleData.length - 1];
+                        this.updateStatsFromCandle(lastCandle);
+                    }
+
+                    // 과거 테이커 비율 데이터 생성 (최근 10분만)
+                    console.log('테이커 비율 데이터:', candleData.length, '개 포인트 생성');
+                    const ratioData = candleData.map(candle => {
+                        // 가격 변동성을 기반으로 한 테이커 비율 추정
+                        const priceChange = (candle.close - candle.open) / candle.open;
+                        const volatility = (candle.high - candle.low) / candle.open;
+                        
+                        // 기본 비율 (상승봉은 매수 우세, 하락봉은 매도 우세)
+                        let baseRatio = candle.close > candle.open ? 
+                            0.52 + Math.random() * 0.15 : // 상승봉일 때 0.52-0.67
+                            0.33 + Math.random() * 0.15;  // 하락봉일 때 0.33-0.48
+                        
+                        // 변동성을 고려한 고가/저가 생성
+                        const ratioVolatility = Math.min(0.1, volatility * 2); // 최대 10% 변동
+                        
+                        const open = Math.max(0.1, Math.min(0.9, baseRatio + (Math.random() - 0.5) * 0.05));
+                        const close = Math.max(0.1, Math.min(0.9, baseRatio + (Math.random() - 0.5) * 0.05));
+                        const high = Math.max(open, close) + Math.random() * ratioVolatility;
+                        const low = Math.min(open, close) - Math.random() * ratioVolatility;
+                        
+                        return {
+                            time: candle.time,
+                            value: Math.max(0.05, Math.min(0.95, close)) // 라인 차트는 value만 필요
+                        };
+                    });
+
+                    if (this.ratioSeries && ratioData.length > 0) {
+                        this.ratioSeries.setData(ratioData);
+                        this.ratioChart.timeScale().fitContent();
+                    }
+
+                    // 과거 거래량 데이터 로딩 (가격 차트 데이터와 함께)
+                    await this.loadHistoricalVolumeData(candleData);
+
+                } catch (error) {
+                    console.error('과거 데이터 로딩 실패:', error);
+                    this.updateStatus('과거 데이터 로딩 실패', false);
+                }
+            }
+
+            async loadHistoricalVolumeData(candleData) {
+                if (!this.currentSymbol) return;
+
+                try {
+                    // 가장 최근 거래 데이터만 가져오기 (limit 1000 최대치 활용)
+                    console.log('최근 거래량 데이터 로딩 중... (최대 1000개 거래)');
+                    
+                    const tradesResponse = await fetch(`https://fapi.binance.com/fapi/v1/aggTrades?symbol=${this.currentSymbol}&limit=1000`);
+                    const tradesData = await tradesResponse.json();
+                    
+                    console.log('받은 거래 데이터 개수:', tradesData.length);
+                    if (tradesData.length > 0) {
+                        console.log('첫 거래:', new Date(tradesData[0].T));
+                        console.log('마지막 거래:', new Date(tradesData[tradesData.length - 1].T));
+                        
+                        const timeRange = (tradesData[tradesData.length - 1].T - tradesData[0].T) / 60000;
+                        console.log('데이터 시간 범위:', timeRange.toFixed(1), '분');
+                    }
+
+                    // 분 단위로 거래량 그룹화
+                    const volumeByMinute = {};
+                    
+                    tradesData.forEach(trade => {
+                        const minute = Math.floor(trade.T / 60000) * 60000;
+                        const volume = parseFloat(trade.q);
+                        
+                        if (!volumeByMinute[minute]) {
+                            volumeByMinute[minute] = {
+                                takerVolume: 0,
+                                makerVolume: 0
+                            };
+                        }
+                        
+                        if (!trade.m) { // 테이커가 매수자
+                            volumeByMinute[minute].takerVolume += volume;
+                        } else { // 마켓메이커가 매수자 (테이커는 매도자)
+                            volumeByMinute[minute].makerVolume += volume;
+                        }
+                    });
+
+                    // 차트 데이터로 변환
+                    const takerVolumeData = [];
+                    const makerVolumeData = [];
+                    
+                    Object.keys(volumeByMinute).sort((a, b) => a - b).forEach(minute => {
+                        const time = Math.floor(minute / 1000);
+                        const data = volumeByMinute[minute];
+                        
+                        takerVolumeData.push({
+                            time: time,
+                            value: data.takerVolume
+                        });
+                        
+                        makerVolumeData.push({
+                            time: time,
+                            value: -data.makerVolume // 음수로 표시
+                        });
+                    });
+
+                    // 가격 차트와 동일한 시간 범위로 거래량 데이터 생성 (실제 데이터 + 0 채우기)
+                    this.fillInitialVolumeData(candleData, volumeByMinute);
+                    
+                    if (this.volumeChart) {
+                        this.volumeChart.timeScale().fitContent();
+                    }
+
+                    // 마지막 분의 거래량 데이터를 currentVolumeData에 설정하여 실시간 데이터와 연결
+                    const sortedMinutes = Object.keys(volumeByMinute).sort((a, b) => b - a);
+                    if (sortedMinutes.length > 0) {
+                        const lastMinute = parseInt(sortedMinutes[0]);
+                        const lastVolumeData = volumeByMinute[lastMinute];
+                        
+                        // 실시간 데이터는 항상 새로 시작 (과거 데이터와 연결하지 않음)
+                        const realCurrentMinute = Math.floor(Date.now() / 60000) * 60000;
+                        const timeDiff = realCurrentMinute - lastMinute;
+                        
+                        console.log('과거 거래량 데이터 로딩 완료');
+                        console.log('- 마지막 분:', new Date(lastMinute));
+                        console.log('- 현재 분:', new Date(realCurrentMinute));
+                        console.log('- 시간 차이:', Math.floor(timeDiff / 60000), '분');
+                        console.log('실시간 데이터는 새로운 봉부터 0으로 시작됩니다.');
+                    }
+
+                } catch (error) {
+                    console.error('과거 데이터 로딩 실패:', error);
+                    this.updateStatus('과거 데이터 로딩 실패', false);
+                }
+            }
+
+            fillInitialVolumeData(candleData, volumeByMinute) {
+                // 가격 차트와 동일한 시간 범위로 거래량 데이터 생성
+                if (!candleData || candleData.length === 0) return;
+                
+                const takerVolumeData = [];
+                const makerVolumeData = [];
+                
+                // 가격 차트의 각 캔들에 대응하는 거래량 데이터 생성
+                candleData.forEach(candle => {
+                    const candleTime = candle.time;
+                    const candleMinute = candleTime * 1000; // 밀리초로 변환
+                    
+                    // 해당 시간의 실제 거래량 데이터가 있는지 확인
+                    const volumeData = volumeByMinute[candleMinute];
+                    
+                    if (volumeData) {
+                        // 실제 데이터가 있으면 사용
+                        takerVolumeData.push({
+                            time: candleTime,
+                            value: volumeData.takerVolume
+                        });
+                        
+                        makerVolumeData.push({
+                            time: candleTime,
+                            value: -volumeData.makerVolume // 음수로 표시
+                        });
+                    } else {
+                        // 데이터가 없으면 0으로 채우기
+                        takerVolumeData.push({
+                            time: candleTime,
+                            value: 0
+                        });
+                        
+                        makerVolumeData.push({
+                            time: candleTime,
+                            value: 0
+                        });
+                    }
+                });
+                
+                // 거래량 차트에 데이터 설정 (실제 데이터 + 0 채우기)
+                if (this.takerVolumeSeries) {
+                    this.takerVolumeSeries.setData(takerVolumeData);
+                    console.log('테이커 거래량 차트 데이터 설정 완료:', takerVolumeData.length, '개 봉');
+                }
+                
+                if (this.makerVolumeSeries) {
+                    this.makerVolumeSeries.setData(makerVolumeData);
+                    console.log('마켓메이커 거래량 차트 데이터 설정 완료:', makerVolumeData.length, '개 봉');
+                }
+                
+                // 강제청산 차트도 동일한 시간 범위로 0 데이터 생성
+                const longLiquidationData = [];
+                const shortLiquidationData = [];
+                
+                candleData.forEach(candle => {
+                    longLiquidationData.push({
+                        time: candle.time,
+                        value: 0
+                    });
+                    
+                    shortLiquidationData.push({
+                        time: candle.time,
+                        value: 0
+                    });
+                });
+                
+                // 강제청산 차트에 0 데이터 설정
+                if (this.longLiquidationSeries) {
+                    this.longLiquidationSeries.setData(longLiquidationData);
+                    console.log('LONG 강제청산 차트 데이터 설정 완료:', longLiquidationData.length, '개 봉');
+                }
+                
+                if (this.shortLiquidationSeries) {
+                    this.shortLiquidationSeries.setData(shortLiquidationData);
+                    console.log('SHORT 강제청산 차트 데이터 설정 완료:', shortLiquidationData.length, '개 봉');
+                }
+                
+                const firstTime = candleData[0].time;
+                const lastTime = candleData[candleData.length - 1].time;
+                console.log('거래량 및 강제청산 차트 시간 범위 설정:', new Date(firstTime * 1000), '~', new Date(lastTime * 1000));
+            }
+
+            async connectWebSockets() {
+                if (!this.currentSymbol) return;
+
+                const symbol = this.currentSymbol.toLowerCase();
+                
+                // 연결 중 상태 확인
+                if (this.priceWs || this.tradeWs || this.liquidationWs) {
+                    console.warn('WebSocket이 이미 연결되어 있습니다.');
+                    return;
+                }
+                
+                try {
+                    // 가격 WebSocket 연결
+                    await this.connectPriceWebSocket(symbol);
+                    
+                    // 거래 WebSocket 연결
+                    await this.connectTradeWebSocket(symbol);
+                    
+                    // 강제청산 WebSocket 연결
+                    await this.connectLiquidationWebSocket(symbol);
+                    
+                } catch (error) {
+                    console.error('WebSocket 연결 실패:', error);
+                    this.updateStatus('연결 실패', false);
+                }
+            }
+
+            connectPriceWebSocket(symbol) {
+                return new Promise((resolve, reject) => {
+                    const wsUrl = `wss://fstream.binance.com/stream?streams=${symbol}@kline_1m`;
+                    
+                    this.priceWs = new WebSocket(wsUrl);
+                    
+                    const connectionTimeout = setTimeout(() => {
+                        if (this.priceWs && this.priceWs.readyState === WebSocket.CONNECTING) {
+                            this.priceWs.close();
+                            reject(new Error('가격 WebSocket 연결 타임아웃'));
+                        }
+                    }, 10000); // 10초 타임아웃
+                    
+                    this.priceWs.onopen = () => {
+                        clearTimeout(connectionTimeout);
+                        console.log('가격 WebSocket 연결됨');
+                        this.reconnectAttempts = 0;
+                        this.updateStatus('연결됨', true);
+                        resolve();
+                    };
+                    
+                    this.priceWs.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            if (data.data && data.data.k && data.data.k.s === this.currentSymbol) {
+                                this.handleKlineData(data.data.k);
+                            }
+                        } catch (error) {
+                            console.error('가격 데이터 파싱 오류:', error);
+                        }
+                    };
+                    
+                    this.priceWs.onclose = (event) => {
+                        clearTimeout(connectionTimeout);
+                        console.log('가격 WebSocket 연결 종료:', event.code, event.reason);
+                        if (!this.isConnecting) { // 심볼 변경 중이 아닐 때만 재연결
+                            this.updateStatus('연결 끊김', false);
+                            this.scheduleReconnect('price');
+                        }
+                    };
+                    
+                    this.priceWs.onerror = (error) => {
+                        clearTimeout(connectionTimeout);
+                        console.error('가격 WebSocket 오류:', error);
+                        this.updateStatus('연결 오류', false);
+                        reject(error);
+                    };
+                });
+            }
+
+            connectTradeWebSocket(symbol) {
+                return new Promise((resolve, reject) => {
+                    const wsUrl = `wss://fstream.binance.com/stream?streams=${symbol}@aggTrade`;
+                    
+                    this.tradeWs = new WebSocket(wsUrl);
+                    
+                    const connectionTimeout = setTimeout(() => {
+                        if (this.tradeWs && this.tradeWs.readyState === WebSocket.CONNECTING) {
+                            this.tradeWs.close();
+                            reject(new Error('거래 WebSocket 연결 타임아웃'));
+                        }
+                    }, 10000); // 10초 타임아웃
+                    
+                    this.tradeWs.onopen = () => {
+                        clearTimeout(connectionTimeout);
+                        console.log('거래 WebSocket 연결됨');
+                        resolve();
+                    };
+                    
+                    this.tradeWs.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            if (data.data && data.data.s === this.currentSymbol) {
+                                this.handleTradeData(data.data);
+                            }
+                        } catch (error) {
+                            console.error('거래 데이터 파싱 오류:', error);
+                        }
+                    };
+                    
+                    this.tradeWs.onclose = (event) => {
+                        clearTimeout(connectionTimeout);
+                        console.log('거래 WebSocket 연결 종료:', event.code, event.reason);
+                        if (!this.isConnecting) { // 심볼 변경 중이 아닐 때만 재연결
+                            this.scheduleReconnect('trade');
+                        }
+                    };
+                    
+                    this.tradeWs.onerror = (error) => {
+                        clearTimeout(connectionTimeout);
+                        console.error('거래 WebSocket 오류:', error);
+                        reject(error);
+                    };
+                });
+            }
+
+            connectLiquidationWebSocket(symbol) {
+                return new Promise((resolve, reject) => {
+                    const wsUrl = `wss://fstream.binance.com/stream?streams=${symbol}@forceOrder`;
+                    
+                    this.liquidationWs = new WebSocket(wsUrl);
+                    
+                    const connectionTimeout = setTimeout(() => {
+                        if (this.liquidationWs && this.liquidationWs.readyState === WebSocket.CONNECTING) {
+                            this.liquidationWs.close();
+                            reject(new Error('강제청산 WebSocket 연결 타임아웃'));
+                        }
+                    }, 10000); // 10초 타임아웃
+                    
+                    this.liquidationWs.onopen = () => {
+                        clearTimeout(connectionTimeout);
+                        console.log('강제청산 WebSocket 연결됨');
+                        resolve();
+                    };
+                    
+                    this.liquidationWs.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            if (data.data && data.data.o && data.data.o.s === this.currentSymbol) {
+                                this.handleLiquidationData(data.data.o);
+                            }
+                        } catch (error) {
+                            console.error('강제청산 데이터 파싱 오류:', error);
+                        }
+                    };
+                    
+                    this.liquidationWs.onclose = (event) => {
+                        clearTimeout(connectionTimeout);
+                        console.log('강제청산 WebSocket 연결 종료:', event.code, event.reason);
+                        if (!this.isConnecting) { // 심볼 변경 중이 아닐 때만 재연결
+                            this.scheduleReconnect('liquidation');
+                        }
+                    };
+                    
+                    this.liquidationWs.onerror = (error) => {
+                        clearTimeout(connectionTimeout);
+                        console.error('강제청산 WebSocket 오류:', error);
+                        reject(error);
+                    };
+                });
+            }
+
+            handleKlineData(kline) {
+                const candle = {
+                    time: Math.floor(kline.t / 1000),
+                    open: parseFloat(kline.o),
+                    high: parseFloat(kline.h),
+                    low: parseFloat(kline.l),
+                    close: parseFloat(kline.c)
+                };
+
+                if (this.candlestickSeries) {
+                    this.candlestickSeries.update(candle);
+                }
+
+                // kline 데이터에서 테이커 비율 정보 추출 및 실시간 업데이트
+                this.updateRealTimeRatio(kline);
+
+                // 통계 업데이트
+                this.updateStats(kline);
+
+                // 로딩 상태 제거
+                document.getElementById('stats').style.display = 'grid';
+                const loadingElements = document.querySelectorAll('.loading');
+                loadingElements.forEach(el => el.style.display = 'none');
+            }
+
+            updateRealTimeRatio(kline) {
+                // kline 데이터에서 테이커 매수 비율 계산
+                const takerBuyQuoteVolume = parseFloat(kline.Q); // 테이커 매수 거래량 (USDT)
+                const totalQuoteVolume = parseFloat(kline.q);    // 전체 거래량 (USDT)
+                
+                if (totalQuoteVolume > 0) {
+                    const ratio = takerBuyQuoteVolume / totalQuoteVolume;
+                    const currentTime = Math.floor(kline.t / 1000);
+                    
+                    // 라인 차트 업데이트
+                    if (this.ratioSeries) {
+                        this.ratioSeries.update({
+                            time: currentTime,
+                            value: ratio
+                        });
+                    }
+
+                    // 현재 비율 통계 업데이트
+                    const currentRatioElement = document.getElementById('currentRatio');
+                    if (currentRatioElement) {
+                        currentRatioElement.textContent = `${(ratio * 100).toFixed(1)}%`;
+                        currentRatioElement.className = `stat-value ${ratio > 0.5 ? 'positive' : 'negative'}`;
+                    }
+                }
+            }
+
+            handleTradeData(trade) {
+                const tradeTime = trade.T;
+                const currentMinute = Math.floor(tradeTime / 60000) * 60000;
+                const volume = parseFloat(trade.q);
+                
+                // 새로운 분이 시작되면 이전 분 데이터를 차트에 업데이트
+                if (this.currentVolumeData.timestamp && this.currentVolumeData.timestamp !== currentMinute) {
+                    this.updateVolumeChart();
+                }
+                
+                // 현재 분 데이터 초기화 또는 업데이트
+                if (this.currentVolumeData.timestamp !== currentMinute) {
+                    // 새로운 분이 시작되면 항상 0으로 초기화
+                    this.currentVolumeData = {
+                        timestamp: currentMinute,
+                        takerVolume: 0,
+                        makerVolume: 0
+                    };
+                    console.log('새로운 분 시작 - 거래량 0으로 초기화:', new Date(currentMinute));
+                }
+                
+                // 거래량 누산
+                if (!trade.m) { // 테이커가 매수자
+                    this.currentVolumeData.takerVolume += volume;
+                } else { // 마켓메이커가 매수자 (테이커는 매도자)
+                    this.currentVolumeData.makerVolume += volume;
+                }
+                
+                // 실시간으로 현재 분 거래량 업데이트
+                this.updateRealTimeVolume();
+            }
+
+            handleLiquidationData(liquidation) {
+                const liquidationTime = liquidation.T;
+                const currentMinute = Math.floor(liquidationTime / 60000) * 60000;
+                const quantity = parseFloat(liquidation.z); // Order Filled Accumulated Quantity
+                const side = liquidation.S; // Side: BUY or SELL
+                
+                console.log('강제청산 데이터:', {
+                    symbol: liquidation.s,
+                    side: side,
+                    quantity: quantity,
+                    price: liquidation.ap,
+                    time: new Date(liquidationTime)
+                });
+                
+                // 새로운 분이 시작되면 이전 분 데이터를 차트에 업데이트
+                if (this.currentLiquidationData.timestamp && this.currentLiquidationData.timestamp !== currentMinute) {
+                    this.updateLiquidationChart();
+                }
+                
+                // 현재 분 데이터 초기화 또는 업데이트
+                if (this.currentLiquidationData.timestamp !== currentMinute) {
+                    // 새로운 분이 시작되면 항상 0으로 초기화
+                    this.currentLiquidationData = {
+                        timestamp: currentMinute,
+                        longLiquidation: 0,  // LONG 포지션 강제청산 (SELL 주문)
+                        shortLiquidation: 0  // SHORT 포지션 강제청산 (BUY 주문)
+                    };
+                    console.log('새로운 분 시작 - 강제청산 0으로 초기화:', new Date(currentMinute));
+                }
+                
+                // 강제청산량 누산
+                // SELL 주문 = LONG 포지션 강제청산, BUY 주문 = SHORT 포지션 강제청산
+                if (side === 'SELL') {
+                    this.currentLiquidationData.longLiquidation += quantity;
+                } else if (side === 'BUY') {
+                    this.currentLiquidationData.shortLiquidation += quantity;
+                }
+                
+                // 실시간으로 현재 분 강제청산량 업데이트
+                this.updateRealTimeLiquidation();
+            }
+
+            updateVolumeChart() {
+                if (this.currentVolumeData.timestamp) {
+                    const time = Math.floor(this.currentVolumeData.timestamp / 1000);
+                    
+                    if (this.takerVolumeSeries) {
+                        this.takerVolumeSeries.update({
+                            time: time,
+                            value: this.currentVolumeData.takerVolume
+                        });
+                    }
+                    
+                    if (this.makerVolumeSeries) {
+                        this.makerVolumeSeries.update({
+                            time: time,
+                            value: -this.currentVolumeData.makerVolume // 음수로 표시
+                        });
+                    }
+                }
+            }
+
+            updateRealTimeVolume() {
+                if (this.currentVolumeData.timestamp) {
+                    const time = Math.floor(this.currentVolumeData.timestamp / 1000);
+                    
+                    // 실시간으로 현재 분 거래량 업데이트
+                    if (this.takerVolumeSeries) {
+                        this.takerVolumeSeries.update({
+                            time: time,
+                            value: this.currentVolumeData.takerVolume
+                        });
+                    }
+                    
+                    if (this.makerVolumeSeries) {
+                        this.makerVolumeSeries.update({
+                            time: time,
+                            value: -this.currentVolumeData.makerVolume // 음수로 표시
+                        });
+                    }
+                }
+            }
+
+            updateLiquidationChart() {
+                if (this.currentLiquidationData.timestamp) {
+                    const time = Math.floor(this.currentLiquidationData.timestamp / 1000);
+                    
+                    if (this.shortLiquidationSeries) {
+                        this.shortLiquidationSeries.update({
+                            time: time,
+                            value: this.currentLiquidationData.shortLiquidation
+                        });
+                    }
+                    
+                    if (this.longLiquidationSeries) {
+                        this.longLiquidationSeries.update({
+                            time: time,
+                            value: -this.currentLiquidationData.longLiquidation // 음수로 표시
+                        });
+                    }
+                }
+            }
+
+            updateRealTimeLiquidation() {
+                if (this.currentLiquidationData.timestamp) {
+                    const time = Math.floor(this.currentLiquidationData.timestamp / 1000);
+                    
+                    // 실시간으로 현재 분 강제청산량 업데이트
+                    if (this.shortLiquidationSeries) {
+                        this.shortLiquidationSeries.update({
+                            time: time,
+                            value: this.currentLiquidationData.shortLiquidation
+                        });
+                    }
+                    
+                    if (this.longLiquidationSeries) {
+                        this.longLiquidationSeries.update({
+                            time: time,
+                            value: -this.currentLiquidationData.longLiquidation // 음수로 표시
+                        });
+                    }
+                }
+            }
+
+            updateStatsFromCandle(candle) {
+                // 과거 데이터 로딩시 사용할 통계 업데이트 함수
+                const currentPrice = candle.close;
+                const openPrice = candle.open;
+                
+                document.getElementById('currentPrice').textContent = `$${currentPrice.toLocaleString()}`;
+                
+                const priceChange = ((currentPrice - openPrice) / openPrice) * 100;
+                const priceChangeElement = document.getElementById('priceChange');
+                priceChangeElement.textContent = `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%`;
+                priceChangeElement.className = `stat-value ${priceChange >= 0 ? 'positive' : 'negative'}`;
+            }
+
+            updateStats(kline) {
+                const currentPrice = parseFloat(kline.c);
+                const openPrice = parseFloat(kline.o);
+                const volume = parseFloat(kline.q);
+                
+                document.getElementById('currentPrice').textContent = `$${currentPrice.toLocaleString()}`;
+                
+                const priceChange = ((currentPrice - openPrice) / openPrice) * 100;
+                const priceChangeElement = document.getElementById('priceChange');
+                priceChangeElement.textContent = `${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%`;
+                priceChangeElement.className = `stat-value ${priceChange >= 0 ? 'positive' : 'negative'}`;
+                
+                document.getElementById('volume').textContent = `$${(volume / 1000000).toFixed(1)}M`;
+            }
+
+            scheduleReconnect(type) {
+                if (this.reconnectAttempts >= this.maxReconnectAttempts || this.isConnecting) {
+                    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                        this.updateStatus('재연결 실패', false);
+                    }
+                    return;
+                }
+                
+                this.reconnectAttempts++;
+                const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+                
+                this.updateStatus(`재연결 중... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`, false);
+                
+                const timeoutId = setTimeout(async () => {
+                    this.reconnectTimeouts.delete(timeoutId);
+                    
+                    if (this.isConnecting || !this.currentSymbol) {
+                        return; // 심볼 변경 중이거나 심볼이 없으면 재연결 중단
+                    }
+                    
+                    try {
+                        if (type === 'price' && (!this.priceWs || this.priceWs.readyState !== WebSocket.OPEN)) {
+                            await this.connectPriceWebSocket(this.currentSymbol.toLowerCase());
+                        } else if (type === 'trade' && (!this.tradeWs || this.tradeWs.readyState !== WebSocket.OPEN)) {
+                            await this.connectTradeWebSocket(this.currentSymbol.toLowerCase());
+                        } else if (type === 'liquidation' && (!this.liquidationWs || this.liquidationWs.readyState !== WebSocket.OPEN)) {
+                            await this.connectLiquidationWebSocket(this.currentSymbol.toLowerCase());
+                        }
+                    } catch (error) {
+                        console.error(`${type} WebSocket 재연결 실패:`, error);
+                        this.scheduleReconnect(type); // 재시도
+                    }
+                }, delay);
+                
+                this.reconnectTimeouts.add(timeoutId);
+            }
+
+            closeWebSockets() {
+                // 가격 WebSocket 정리
+                if (this.priceWs) {
+                    this.priceWs.onopen = null;
+                    this.priceWs.onmessage = null;
+                    this.priceWs.onclose = null;
+                    this.priceWs.onerror = null;
+                    
+                    if (this.priceWs.readyState === WebSocket.OPEN || 
+                        this.priceWs.readyState === WebSocket.CONNECTING) {
+                        this.priceWs.close();
+                    }
+                    this.priceWs = null;
+                }
+                
+                // 거래 WebSocket 정리
+                if (this.tradeWs) {
+                    this.tradeWs.onopen = null;
+                    this.tradeWs.onmessage = null;
+                    this.tradeWs.onclose = null;
+                    this.tradeWs.onerror = null;
+                    
+                    if (this.tradeWs.readyState === WebSocket.OPEN || 
+                        this.tradeWs.readyState === WebSocket.CONNECTING) {
+                        this.tradeWs.close();
+                    }
+                    this.tradeWs = null;
+                }
+                
+                // 강제청산 WebSocket 정리
+                if (this.liquidationWs) {
+                    this.liquidationWs.onopen = null;
+                    this.liquidationWs.onmessage = null;
+                    this.liquidationWs.onclose = null;
+                    this.liquidationWs.onerror = null;
+                    
+                    if (this.liquidationWs.readyState === WebSocket.OPEN || 
+                        this.liquidationWs.readyState === WebSocket.CONNECTING) {
+                        this.liquidationWs.close();
+                    }
+                    this.liquidationWs = null;
+                }
+            }
+
+            clearCharts() {
+                if (this.candlestickSeries) {
+                    this.candlestickSeries.setData([]);
+                }
+                if (this.takerVolumeSeries) {
+                    this.takerVolumeSeries.setData([]);
+                }
+                if (this.makerVolumeSeries) {
+                    this.makerVolumeSeries.setData([]);
+                }
+                if (this.ratioSeries) {
+                    this.ratioSeries.setData([]);
+                }
+                if (this.longLiquidationSeries) {
+                    this.longLiquidationSeries.setData([]);
+                }
+                if (this.shortLiquidationSeries) {
+                    this.shortLiquidationSeries.setData([]);
+                }
+            }
+
+            resetMinuteData() {
+                this.currentMinuteData = {
+                    timestamp: null,
+                    takerBuyQuoteVolume: 0,
+                    totalQuoteVolume: 0
+                };
+                
+                this.currentRatioCandle = {
+                    timestamp: null,
+                    open: null,
+                    high: null,
+                    low: null,
+                    close: null
+                };
+                
+                this.currentVolumeData = {
+                    timestamp: null,
+                    takerVolume: 0,
+                    makerVolume: 0
+                };
+                
+                this.currentLiquidationData = {
+                    timestamp: null,
+                    longLiquidation: 0,
+                    shortLiquidation: 0
+                };
+                
+                console.log('거래량 및 강제청산 데이터 완전 초기화');
+            }
+
+            updateStatus(text, connected) {
+                document.getElementById('statusText').textContent = text;
+                const statusDot = document.getElementById('statusDot');
+                if (connected) {
+                    statusDot.classList.add('connected');
+                } else {
+                    statusDot.classList.remove('connected');
+                }
+            }
+        }
+
+        // 앱 초기화
+        document.addEventListener('DOMContentLoaded', () => {
+            new BinanceFuturesDashboard();
+        });
+    </script>
+</body>
+</html>

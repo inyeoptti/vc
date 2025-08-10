@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Binance USDM Perp Slippage (USDT)</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #141922;
+      --panel-2: #0f141b;
+      --text: #e6eaf2;
+      --muted: #93a1b1;
+      --accent: #3b82f6;
+      --good: #22c55e;
+      --bad: #ef4444;
+      --warn: #f59e0b;
+      --border: #273043;
+      --pill-disconnected: #6b7280;
+      --pill-connecting: #f59e0b;
+      --pill-connected: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 16px 16px 48px;
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0 0 12px;
+      color: var(--text);
+      letter-spacing: 0.2px;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    label { font-size: 12px; color: var(--muted); }
+    select, input[type="text"] {
+      width: 100%;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      outline: none;
+    }
+    .notionals { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .notionals input { width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; text-align: right; }
+    input.invalid { border-color: var(--bad); box-shadow: 0 0 0 2px rgba(239,68,68,0.15) inset; }
+
+    .btn {
+      appearance: none;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: filter .15s ease-out;
+      font-weight: 600;
+    }
+    .btn.secondary { background: #364152; }
+    .btn:hover { filter: brightness(1.05); }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--panel-2);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .pill {
+      width: 10px; height: 10px; border-radius: 50%; background: var(--pill-disconnected);
+      box-shadow: 0 0 0 2px rgba(0,0,0,0.25) inset;
+    }
+    .pill.connected { background: var(--pill-connected); }
+    .pill.connecting { background: var(--pill-connecting); }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .value { font-feature-settings: "tnum" 1; font-variant-numeric: tabular-nums; font-size: 16px; }
+    .value.big { font-size: 18px; font-weight: 700; }
+    .muted { color: var(--muted); }
+    .warn { color: var(--warn); }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; font-feature-settings: "tnum" 1; font-variant-numeric: tabular-nums; }
+    thead th {
+      text-align: left; font-size: 12px; color: var(--muted); font-weight: 600;
+      border-bottom: 1px solid var(--border); padding: 8px;
+      position: sticky; top: 0; background: var(--panel);
+    }
+    tbody td { padding: 8px; border-bottom: 1px solid var(--border); }
+    tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+    .chart-wrap { margin-top: 16px; }
+    .chart {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px 12px;
+    }
+    .chart-header { display: flex; justify-content: space-between; align-items: baseline; }
+    .chart-title { font-size: 12px; color: var(--muted); }
+    .chart-scale { font-size: 11px; color: var(--muted); }
+
+    /* Smooth bar updates */
+    .bar { transition: width .35s ease; }
+    .bar-label { font-size: 11px; fill: #cfd6e6; pointer-events: none; }
+    .axis, .grid { stroke: #2a3446; }
+    .x-tick, .y-label { font-size: 11px; fill: #cfd6e6; }
+
+    .note { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Binance USDM 선물 슬리피지 (USDT)</h1>
+
+    <div class="controls">
+      <div>
+        <label for="symbolSelect">심볼 (USDT Perpetual)</label>
+        <select id="symbolSelect"></select>
+      </div>
+      <div>
+        <label>노셔널 (USDT) 5개</label>
+        <div id="notionalGroup" class="notionals">
+          <input class="notional" data-idx="0" type="number" min="0" step="any" placeholder="100" />
+          <input class="notional" data-idx="1" type="number" min="0" step="any" placeholder="500" />
+          <input class="notional" data-idx="2" type="number" min="0" step="any" placeholder="1000" />
+          <input class="notional" data-idx="3" type="number" min="0" step="any" placeholder="5000" />
+          <input class="notional" data-idx="4" type="number" min="0" step="any" placeholder="10000" />
+        </div>
+      </div>
+      <button id="connectBtn" class="btn">Connect</button>
+      <div class="status">
+        <span id="statusPill" class="pill"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="card">
+        <h3>Best Bid</h3>
+        <div id="bestBid" class="value big">—</div>
+      </div>
+      <div class="card">
+        <h3>Best Ask</h3>
+        <div id="bestAsk" class="value big">—</div>
+      </div>
+      <div class="card">
+        <h3>Mid</h3>
+        <div id="midPx" class="value big">—</div>
+      </div>
+      <div class="card">
+        <h3>Spread (ticks / bps)</h3>
+        <div id="spread" class="value big">—</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 14px;">
+      <h3 style="margin-bottom:8px;">슬리피지 (실시간)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Notional (USDT)</th>
+            <th>BUY Avg Px</th>
+            <th>BUY Slippage (bps)</th>
+            <th>BUY Worst Px</th>
+            <th>SELL Avg Px</th>
+            <th>SELL Slippage (bps)</th>
+            <th>SELL Worst Px</th>
+            <th>Levels Used</th>
+            <th>Fill</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody id="slipBody"></tbody>
+      </table>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart">
+        <div class="chart-header">
+          <div class="chart-title">슬리피지 bps 차트 (BUY: 빨강, SELL: 초록)</div>
+          <div id="scaleLabel" class="chart-scale">스케일: 0 → 10 bps</div>
+        </div>
+        <svg id="slipSvg" width="100%" height="260" viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label="Slippage bar chart">
+          <!-- Axis and grid will be drawn once; bars updated by attribute changes. -->
+        </svg>
+      </div>
+      <div class="note">주의: 깊이가 부족하면 PARTIAL로 표시되며, 채워진 부분 기준으로 bps가 계산됩니다.</div>
+    </div>
+  </div>
+
+  <script>
+    // ======== 글로벌 상태 ========
+    const API_BASE = 'https://fapi.binance.com';
+    const WS_BASE = 'wss://fstream.binance.com/ws';
+
+    /** @type {Map<number, number>} */
+    const bidsMap = new Map(); // price -> qty
+    /** @type {Map<number, number>} */
+    const asksMap = new Map(); // price -> qty
+
+    let lastUpdateId = 0; // from snapshot and subsequent stream updates
+    let ws = null; // WebSocket
+    let isConnected = false;
+    let isConnecting = false;
+    let resyncInProgress = false;
+    let snapshotApplied = false; // 스냅샷이 적용되었는지 여부
+    /** @type {Array<any>} */
+    let eventBuffer = []; // 스냅샷 적용 전/재동기화 중 수신된 이벤트를 버퍼링
+
+    // 심볼 메타
+    let currentSymbol = 'BTCUSDT';
+    let pricePrecision = 2;
+    let quantityPrecision = 3;
+    let tickSize = 0.01;
+
+    // 노셔널 5개 상태
+    let notionals = [100, 500, 1000, 5000, 10000];
+
+    // 포맷터
+    let priceFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+    let qtyFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 });
+    let usdFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+    let bpsFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
+
+    // DOM 참조
+    const elSymbol = document.getElementById('symbolSelect');
+    const elNotionalGroup = document.getElementById('notionalGroup');
+    const elNotionalInputs = elNotionalGroup ? Array.from(elNotionalGroup.querySelectorAll('input.notional')) : [];
+    const elConnect = document.getElementById('connectBtn');
+    const elPill = document.getElementById('statusPill');
+    const elStatus = document.getElementById('statusText');
+
+    const elBestBid = document.getElementById('bestBid');
+    const elBestAsk = document.getElementById('bestAsk');
+    const elMid = document.getElementById('midPx');
+    const elSpread = document.getElementById('spread');
+
+    const elSlipBody = document.getElementById('slipBody');
+    const elSvg = document.getElementById('slipSvg');
+    const elScale = document.getElementById('scaleLabel');
+
+    // 테이블/차트 엘리먼트 재사용을 위해 미리 생성
+    const rowViews = []; // {tr, cells: HTMLTableCellElement[]} x5
+    const barViews = []; // 10 bars: [{rect, label, kind:'BUY'|'SELL', idx}] x10
+
+    // 차트 레이아웃
+    const chart = {
+      width: 900,
+      height: 260,
+      margin: { left: 90, right: 24, top: 26, bottom: 22 },
+      barHeight: 14,
+      groupGap: 10,
+      rowGap: 6
+    };
+
+    // ======== 초기화 ========
+    init();
+
+    async function init() {
+      // 초기 노셔널 입력 5칸 값 세팅 및 리스너 연결
+      for (let i = 0; i < 5; i++) {
+        const input = elNotionalInputs[i];
+        if (!input) continue;
+        input.value = String(notionals[i] ?? '');
+        input.addEventListener('input', () => {
+          const v = Number(input.value);
+          if (isFinite(v) && v > 0) {
+            notionals[i] = v;
+            input.classList.remove('invalid');
+          } else {
+            notionals[i] = NaN;
+            input.classList.add('invalid');
+          }
+          renderAll();
+        });
+      }
+
+      // UI 이벤트
+      elConnect.addEventListener('click', () => {
+        if (isConnected || isConnecting) {
+          disconnect();
+        } else {
+          safeConnectFlow();
+        }
+      });
+
+      elSymbol.addEventListener('change', () => {
+        currentSymbol = elSymbol.value;
+        // 심볼 바뀌면 즉시 재동기화
+        if (isConnected || isConnecting) {
+          safeConnectFlow();
+        }
+      });
+
+      // 단일 입력은 제거됨 (5개 필드가 실시간 반영)
+
+      // 심볼 목록 로드
+      await loadSymbols();
+
+      // 테이블/차트 구성
+      buildTableRows();
+      buildSvgOnce();
+
+      // 실시간 업데이트로 변경: 이벤트 발생 시마다 renderAll 호출
+
+      // 자동 연결은 수동 트리거로 둠
+    }
+
+    // ======== 심볼/메타 로딩 ========
+    async function loadSymbols() {
+      try {
+        const res = await fetch(`${API_BASE}/fapi/v1/exchangeInfo`);
+        const info = await res.json();
+        // USDM, PERPETUAL, TRADING, quoteAsset USDT
+        const list = info.symbols
+          .filter(s => s.contractType === 'PERPETUAL' && s.status === 'TRADING' && s.quoteAsset === 'USDT')
+          .sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+        elSymbol.innerHTML = '';
+        for (const s of list) {
+          const opt = document.createElement('option');
+          opt.value = s.symbol;
+          opt.textContent = s.symbol;
+          elSymbol.appendChild(opt);
+        }
+        // 기본 선택: BTCUSDT
+        const hasBTC = list.find(s => s.symbol === 'BTCUSDT');
+        elSymbol.value = hasBTC ? 'BTCUSDT' : list[0]?.symbol || 'BTCUSDT';
+        currentSymbol = elSymbol.value;
+
+        // 현재 심볼 정밀도/틱사이즈 저장
+        const meta = list.find(s => s.symbol === currentSymbol) || list[0];
+        applySymbolMeta(meta);
+      } catch (e) {
+        console.error('exchangeInfo load error', e);
+      }
+    }
+
+    function applySymbolMeta(meta) {
+      if (!meta) return;
+      pricePrecision = meta.pricePrecision;
+      quantityPrecision = meta.quantityPrecision;
+      const priceFilter = (meta.filters || []).find(f => f.filterType === 'PRICE_FILTER');
+      tickSize = priceFilter ? Number(priceFilter.tickSize) : 0.01;
+      priceFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: pricePrecision });
+      qtyFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: Math.min(6, Math.max(0, quantityPrecision)) });
+    }
+
+    // ======== 연결/해제 ========
+    async function safeConnectFlow() {
+      try {
+        isConnecting = true;
+        setStatus('connecting');
+
+        // 심볼 메타 갱신
+        await updateSymbolMeta(currentSymbol);
+
+        // 기존 연결 정리 후 새로 연결
+        await disconnect();
+        clearBook();
+        await snapshotAndStream(currentSymbol);
+        isConnected = true;
+        isConnecting = false;
+        setStatus('connected');
+      } catch (e) {
+        console.error('connect flow error', e);
+        isConnecting = false;
+        isConnected = false;
+        setStatus('disconnected');
+      }
+    }
+
+    async function updateSymbolMeta(symbol) {
+      const opt = [...elSymbol.options].find(o => o.value === symbol);
+      if (!opt) return;
+      try {
+        const res = await fetch(`${API_BASE}/fapi/v1/exchangeInfo`);
+        const info = await res.json();
+        const meta = info.symbols.find(s => s.symbol === symbol);
+        applySymbolMeta(meta);
+      } catch {}
+    }
+
+    async function disconnect() {
+      if (ws) {
+        try { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(1000, 'client close'); } catch {}
+        ws = null;
+      }
+      isConnected = false;
+      snapshotApplied = false;
+      eventBuffer = [];
+      setStatus('disconnected');
+      renderAll();
+    }
+
+    function setStatus(state) {
+      if (state === 'connected') {
+        elPill.classList.add('connected');
+        elPill.classList.remove('connecting');
+        elStatus.textContent = 'Connected';
+        elConnect.textContent = 'Disconnect';
+        elConnect.classList.remove('secondary');
+      } else if (state === 'connecting') {
+        elPill.classList.remove('connected');
+        elPill.classList.add('connecting');
+        elStatus.textContent = 'Syncing…';
+        elConnect.textContent = 'Disconnect';
+        elConnect.classList.add('secondary');
+      } else {
+        elPill.classList.remove('connected');
+        elPill.classList.remove('connecting');
+        elStatus.textContent = 'Disconnected';
+        elConnect.textContent = 'Connect';
+        elConnect.classList.remove('secondary');
+      }
+    }
+
+    // ======== 오더북 스냅샷 + 스트림 처리 ========
+    function clearBook() {
+      bidsMap.clear();
+      asksMap.clear();
+      lastUpdateId = 0;
+      resyncInProgress = false;
+      snapshotApplied = false;
+      eventBuffer = [];
+    }
+
+    // 스냅샷 + 스트림 동기화
+    // 1) 웹소켓을 먼저 열고 이벤트를 버퍼링
+    // 2) 스냅샷을 받은 뒤 lastUpdateId 설정 및 버퍼 처리 (U/u/pu 규칙 검증)
+    // 3) 이후 라이브 이벤트는 실시간 처리, 불일치 발생 시 스냅샷 재적용(resync)
+    async function snapshotAndStream(symbol) {
+      const streamName = `${symbol.toLowerCase()}@depth@100ms`;
+      snapshotApplied = false;
+      eventBuffer = [];
+
+      ws = new WebSocket(`${WS_BASE}/${streamName}`);
+
+      ws.onmessage = (msg) => {
+        const d = JSON.parse(msg.data);
+        if (!d || typeof d.u === 'undefined') return;
+        if (!snapshotApplied || resyncInProgress) {
+          // 스냅샷 전/재동기화 중에는 버퍼링만
+          eventBuffer.push(d);
+          if (eventBuffer.length > 2000) eventBuffer.shift();
+          return;
+        }
+        processEvent(d);
+      };
+
+      ws.onerror = (e) => { console.error('ws error', e); };
+      ws.onclose = () => { isConnected = false; setStatus('disconnected'); };
+
+      // 깊이 스냅샷 요청 및 적용
+      const snap = await fetch(`${API_BASE}/fapi/v1/depth?symbol=${symbol}&limit=500`).then(r => r.json());
+      lastUpdateId = snap.lastUpdateId;
+      applySideSnapshot(bidsMap, snap.bids);
+      applySideSnapshot(asksMap, snap.asks);
+      snapshotApplied = true;
+      renderAll(); // 스냅샷 적용 직후 1회 렌더
+
+      // 버퍼 처리
+      flushBufferedEvents();
+    }
+
+    function flushBufferedEvents() {
+      if (!snapshotApplied) return;
+      // 버퍼 도중에 들어온 이벤트를 순서대로 처리
+      for (const d of eventBuffer) {
+        if (d.u <= lastUpdateId) continue; // 스냅샷 이전 이벤트 무시
+        // 불연속 검사: 선물은 pu 제공. (pu !== lastUpdateId) && (U !== lastUpdateId+1) → 재동기화
+        const U = Number(d.U), u = Number(d.u), pu = Number(d.pu);
+        const contiguous = (pu === lastUpdateId) || (U === lastUpdateId + 1);
+        if (!contiguous) {
+          // out-of-sync → 재동기화
+          resync();
+          return;
+        }
+        applySideDeltas(bidsMap, d.b, true);
+        applySideDeltas(asksMap, d.a, false);
+        lastUpdateId = u;
+      }
+      eventBuffer = [];
+      renderAll(); // 버퍼 처리 후 1회 렌더
+    }
+
+    function processEvent(d) {
+      const U = Number(d.U), u = Number(d.u), pu = Number(d.pu);
+      if (u <= lastUpdateId) return; // 이미 처리된 이벤트
+      const contiguous = (pu === lastUpdateId) || (U === lastUpdateId + 1);
+      if (!contiguous) { resync(); return; }
+      applySideDeltas(bidsMap, d.b, true);
+      applySideDeltas(asksMap, d.a, false);
+      lastUpdateId = u;
+      renderAll(); // 이벤트 수신 즉시 렌더
+    }
+
+    async function resync() {
+      // 스냅샷 재적용 (웹소켓 유지, 이벤트는 버퍼링)
+      if (resyncInProgress) return;
+      resyncInProgress = true;
+      snapshotApplied = false;
+      try {
+        const snap = await fetch(`${API_BASE}/fapi/v1/depth?symbol=${currentSymbol}&limit=500`).then(r => r.json());
+        // 기존 북 초기화 후 스냅샷 반영
+        bidsMap.clear();
+        asksMap.clear();
+        lastUpdateId = snap.lastUpdateId;
+        applySideSnapshot(bidsMap, snap.bids);
+        applySideSnapshot(asksMap, snap.asks);
+        snapshotApplied = true;
+        // 버퍼 처리
+        flushBufferedEvents();
+      } catch (e) {
+        console.error('resync snapshot error', e);
+      } finally {
+        resyncInProgress = false;
+      }
+    }
+
+    function applySideSnapshot(map, arr) {
+      for (const [p, q] of arr) {
+        const price = Number(p);
+        const qty = Number(q);
+        if (qty === 0) { map.delete(price); } else { map.set(price, qty); }
+      }
+    }
+
+    function applySideDeltas(map, arr, isBid) {
+      for (const [p, q] of arr) {
+        const price = Number(p);
+        const qty = Number(q);
+        if (qty === 0) {
+          map.delete(price);
+        } else {
+          map.set(price, qty);
+        }
+      }
+    }
+
+    // ======== 계산 ========
+    function getBestPrices() {
+      let bestBid = null, bestAsk = null;
+      for (const [price, qty] of bidsMap) {
+        if (qty <= 0) continue;
+        if (bestBid === null || price > bestBid) bestBid = price;
+      }
+      for (const [price, qty] of asksMap) {
+        if (qty <= 0) continue;
+        if (bestAsk === null || price < bestAsk) bestAsk = price;
+      }
+      const mid = (bestBid != null && bestAsk != null) ? (bestBid + bestAsk) / 2 : null;
+      return { bestBid, bestAsk, mid };
+    }
+
+    function getSortedSides() {
+      const bids = [];
+      const asks = [];
+      for (const [p, q] of bidsMap) if (q > 0) bids.push([p, q]);
+      for (const [p, q] of asksMap) if (q > 0) asks.push([p, q]);
+      bids.sort((a, b) => b[0] - a[0]); // desc
+      asks.sort((a, b) => a[0] - b[0]); // asc
+      return { bids, asks };
+    }
+
+    // 슬리피지 시뮬레이션
+    // BUY: asks에서 가격*수량(USDT 비용) 누적 → 목표 notional 도달까지 소비 → VWAP
+    // SELL: bids에서 가격*수량(USDT 수취) 누적 → 목표 notional 도달까지 소비 → VWAP
+    function simulateFill(notionalUSDT, sideLevels) {
+      let remainingUSDT = notionalUSDT;
+      let totalBaseQty = 0;
+      let totalUSDT = 0;
+      let levelsUsed = 0;
+      let worstPx = null;
+
+      for (let i = 0; i < sideLevels.length && remainingUSDT > 0; i++) {
+        const [price, qty] = sideLevels[i];
+        const levelUSDT = price * qty;
+        const takeUSDT = Math.min(remainingUSDT, levelUSDT);
+        const takeQty = takeUSDT / price;
+        totalBaseQty += takeQty;
+        totalUSDT += takeUSDT;
+        remainingUSDT -= takeUSDT;
+        worstPx = price;
+        levelsUsed++;
+      }
+
+      const filledUSDT = totalUSDT;
+      const filled = remainingUSDT <= 0 && totalBaseQty > 0;
+      const partial = !filled && totalBaseQty > 0;
+      const none = totalBaseQty === 0;
+      const avgPx = totalBaseQty > 0 ? (totalUSDT / totalBaseQty) : null;
+      return { avgPx, worstPx, levelsUsed, filledUSDT, filled, partial, none, totalBaseQty };
+    }
+
+    // ======== 렌더링 ========
+    function renderAll() {
+      // Top stats
+      const { bestBid, bestAsk, mid } = getBestPrices();
+      if (bestBid == null) { elBestBid.textContent = '—'; } else { elBestBid.textContent = priceFormatter.format(bestBid); }
+      if (bestAsk == null) { elBestAsk.textContent = '—'; } else { elBestAsk.textContent = priceFormatter.format(bestAsk); }
+      if (mid == null) {
+        elMid.textContent = '—';
+        elSpread.textContent = '—';
+      } else {
+        elMid.textContent = priceFormatter.format(mid);
+        if (bestBid != null && bestAsk != null && tickSize > 0) {
+          const spreadTicks = (bestAsk - bestBid) / tickSize;
+          const spreadBps = ((bestAsk - bestBid) / mid) * 10000;
+          elSpread.textContent = `${Math.round(spreadTicks)} / ${bpsFormatter.format(spreadBps)} bps`;
+        } else {
+          elSpread.textContent = '—';
+        }
+      }
+
+      // Sorted sides for simulation
+      const { bids, asks } = getSortedSides();
+
+      // Update rows and collect BPS for chart
+      const bpsBuy = [];
+      const bpsSell = [];
+      const nowStr = new Date().toLocaleTimeString();
+
+      for (let i = 0; i < 5; i++) {
+        const row = rowViews[i];
+        const N = notionals[i] ?? 0;
+        const valid = typeof N === 'number' && isFinite(N) && N > 0;
+
+        let buy = { avgPx: null, worstPx: null, levelsUsed: 0, filled: false, partial: false, none: true };
+        let sell = { avgPx: null, worstPx: null, levelsUsed: 0, filled: false, partial: false, none: true };
+
+        if (valid) {
+          buy = simulateFill(N, asks);
+          sell = simulateFill(N, bids);
+        }
+
+        const midPx = mid;
+        let buyBps = null, sellBps = null;
+        if (midPx != null) {
+          if (buy.avgPx != null) buyBps = ((buy.avgPx - midPx) / midPx) * 10000;
+          if (sell.avgPx != null) sellBps = ((midPx - sell.avgPx) / midPx) * 10000;
+        }
+        bpsBuy[i] = buyBps == null ? 0 : Math.max(0, buyBps);
+        bpsSell[i] = sellBps == null ? 0 : Math.max(0, sellBps);
+
+        // Fill 상태
+        let fillText = '—';
+        if (valid) {
+          if (buy.none && sell.none) fillText = '—';
+          else if ((buy.filled && sell.filled)) fillText = 'FULL';
+          else if (buy.partial || sell.partial) fillText = 'PARTIAL';
+          else fillText = (buy.none || sell.none) ? 'PARTIAL' : 'FULL';
+        }
+
+        // cells: [Notional, BUY avg, BUY bps, BUY worst, SELL avg, SELL bps, SELL worst, levels, fill, time]
+        const c = row.cells;
+        c[0].textContent = valid ? usdFormatter.format(N) : '—';
+        c[1].textContent = buy.avgPx != null ? priceFormatter.format(buy.avgPx) : '—';
+        c[2].textContent = (buyBps != null && isFinite(buyBps)) ? `${bpsFormatter.format(buyBps)} bps` : '—';
+        c[3].textContent = buy.worstPx != null ? priceFormatter.format(buy.worstPx) : '—';
+        c[4].textContent = sell.avgPx != null ? priceFormatter.format(sell.avgPx) : '—';
+        c[5].textContent = (sellBps != null && isFinite(sellBps)) ? `${bpsFormatter.format(sellBps)} bps` : '—';
+        c[6].textContent = sell.worstPx != null ? priceFormatter.format(sell.worstPx) : '—';
+        c[7].textContent = String((buy.levelsUsed || 0) + (sell.levelsUsed || 0));
+        c[8].textContent = fillText;
+        c[8].className = fillText === 'PARTIAL' ? 'warn' : '';
+        c[9].textContent = nowStr;
+      }
+
+      // Update chart bars
+      updateBars(bpsBuy, bpsSell);
+    }
+
+    // ======== 테이블 빌드 ========
+    function buildTableRows() {
+      elSlipBody.innerHTML = '';
+      for (let i = 0; i < 5; i++) {
+        const tr = document.createElement('tr');
+        const cells = [];
+        for (let j = 0; j < 10; j++) {
+          const td = document.createElement('td');
+          td.textContent = '—';
+          tr.appendChild(td);
+          cells.push(td);
+        }
+        elSlipBody.appendChild(tr);
+        rowViews.push({ tr, cells });
+      }
+    }
+
+    // ======== SVG 차트 ========
+    function buildSvgOnce() {
+      while (elSvg.firstChild) elSvg.removeChild(elSvg.firstChild);
+
+      const plotX = chart.margin.left;
+      const plotY = chart.margin.top;
+      const plotW = chart.width - chart.margin.left - chart.margin.right;
+      const plotH = chart.height - chart.margin.top - chart.margin.bottom;
+
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', plotX);
+      bg.setAttribute('y', plotY);
+      bg.setAttribute('width', plotW);
+      bg.setAttribute('height', plotH);
+      bg.setAttribute('fill', 'none');
+      bg.setAttribute('stroke', '#2a3446');
+      bg.setAttribute('opacity', '0.5');
+      elSvg.appendChild(bg);
+
+      for (let i = 0; i <= 5; i++) {
+        const x = plotX + (plotW * i / 5);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x);
+        line.setAttribute('x2', x);
+        line.setAttribute('y1', plotY);
+        line.setAttribute('y2', plotY + plotH);
+        line.setAttribute('class', 'grid');
+        line.setAttribute('opacity', i === 0 ? '0.7' : '0.25');
+        elSvg.appendChild(line);
+
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', x);
+        label.setAttribute('y', plotY - 6);
+        label.setAttribute('text-anchor', i === 0 ? 'start' : (i === 5 ? 'end' : 'middle'));
+        label.setAttribute('class', 'x-tick');
+        label.textContent = i === 0 ? '0' : '';
+        elSvg.appendChild(label);
+      }
+
+      const groupHeight = chart.barHeight * 2 + chart.rowGap;
+      for (let i = 0; i < 5; i++) {
+        const groupY = plotY + i * (groupHeight + chart.groupGap);
+
+        const yLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        yLabel.setAttribute('x', chart.margin.left - 6);
+        yLabel.setAttribute('y', groupY + chart.barHeight);
+        yLabel.setAttribute('text-anchor', 'end');
+        yLabel.setAttribute('class', 'y-label');
+        yLabel.textContent = `${notionals[i] ?? ''}`;
+        elSvg.appendChild(yLabel);
+
+        const buyRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        buyRect.setAttribute('x', plotX);
+        buyRect.setAttribute('y', groupY);
+        buyRect.setAttribute('width', 0);
+        buyRect.setAttribute('height', chart.barHeight);
+        buyRect.setAttribute('rx', 3);
+        buyRect.setAttribute('fill', '#f87171');
+        buyRect.setAttribute('class', 'bar');
+        elSvg.appendChild(buyRect);
+
+        const buyLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        buyLabel.setAttribute('x', plotX + 4);
+        buyLabel.setAttribute('y', groupY + chart.barHeight - 2);
+        buyLabel.setAttribute('class', 'bar-label');
+        buyLabel.textContent = '';
+        elSvg.appendChild(buyLabel);
+
+        const sellRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        sellRect.setAttribute('x', plotX);
+        sellRect.setAttribute('y', groupY + chart.barHeight + chart.rowGap);
+        sellRect.setAttribute('width', 0);
+        sellRect.setAttribute('height', chart.barHeight);
+        sellRect.setAttribute('rx', 3);
+        sellRect.setAttribute('fill', '#34d399');
+        sellRect.setAttribute('class', 'bar');
+        elSvg.appendChild(sellRect);
+
+        const sellLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        sellLabel.setAttribute('x', plotX + 4);
+        sellLabel.setAttribute('y', groupY + chart.barHeight + chart.rowGap + chart.barHeight - 2);
+        sellLabel.setAttribute('class', 'bar-label');
+        sellLabel.textContent = '';
+        elSvg.appendChild(sellLabel);
+
+        barViews.push({ rect: buyRect, label: buyLabel, kind: 'BUY', idx: i });
+        barViews.push({ rect: sellRect, label: sellLabel, kind: 'SELL', idx: i });
+      }
+    }
+
+    function updateBars(bpsBuy, bpsSell) {
+      let maxAbs = 10;
+      for (let i = 0; i < 5; i++) {
+        if (isFinite(bpsBuy[i])) maxAbs = Math.max(maxAbs, bpsBuy[i]);
+        if (isFinite(bpsSell[i])) maxAbs = Math.max(maxAbs, bpsSell[i]);
+      }
+      const plotX = chart.margin.left;
+      const plotW = chart.width - chart.margin.left - chart.margin.right;
+
+      elScale.textContent = `스케일: 0 → ${bpsFormatter.format(maxAbs)} bps`;
+
+      // x축 눈금 라벨(0, 20%, 40%, 60%, 80%, 100% of maxAbs)
+      const xTicks = [...elSvg.querySelectorAll('text.x-tick')];
+      for (let i = 0; i < xTicks.length; i++) {
+        const val = (maxAbs * i) / 5;
+        xTicks[i].textContent = i === 0 ? '0' : `${bpsFormatter.format(val)}`;
+      }
+
+      // SVG 바 업데이트 로직: width/fill/label 속성만 갱신
+      for (const view of barViews) {
+        const i = view.idx;
+        const val = view.kind === 'BUY' ? (bpsBuy[i] ?? 0) : (bpsSell[i] ?? 0);
+        const clamped = Math.max(0, isFinite(val) ? val : 0);
+        const w = Math.max(0, Math.min(1, clamped / maxAbs)) * plotW;
+        view.rect.setAttribute('width', String(w));
+
+        const t = Math.max(0.05, Math.min(1, clamped / maxAbs));
+        if (view.kind === 'BUY') {
+          view.rect.setAttribute('fill', `hsl(0, ${50 + 30*t}%, ${45 - 10*t}%)`);
+        } else {
+          view.rect.setAttribute('fill', `hsl(150, ${45 + 30*t}%, ${40 - 8*t}%)`);
+        }
+
+        // 바 끝 위치 계산 및 라벨 위치 보정 (너무 짧으면 바 밖, 충분히 길면 바 안쪽 끝)
+        let x = plotX + w + 4;
+        const txt = isFinite(clamped) && clamped > 0 ? `${bpsFormatter.format(clamped)} bps` : '';
+        view.label.textContent = txt;
+        // 기준: 60px 이상이면 안쪽 오른쪽 끝에 배치, 아니면 바 밖
+        if (w >= 60) {
+          x = plotX + w - 4;
+          view.label.setAttribute('text-anchor', 'end');
+        } else {
+          x = plotX + w + 4;
+          view.label.setAttribute('text-anchor', 'start');
+        }
+        // 그래프 범위 내로 클램프
+        const minX = plotX + 2;
+        const maxX = plotX + plotW - 2;
+        x = Math.max(minX, Math.min(maxX, x));
+        view.label.setAttribute('x', String(x));
+      }
+
+      // 왼쪽 그룹 라벨(노셔널) 업데이트 - 전용 클래스 사용
+      const labels = [...elSvg.querySelectorAll('text.y-label')];
+      for (let i = 0; i < Math.min(labels.length, 5); i++) {
+        const val = notionals[i];
+        labels[i].textContent = (typeof val === 'number' && isFinite(val) && val > 0) ? `${usdFormatter.format(val)}` : '—';
+      }
+    }
+
+    // ======== 유틸 ========
+    function parseNotionals(text) {
+      const parts = text.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+      const nums = parts.map(x => Number(x)).filter(v => isFinite(v) && v > 0);
+      if (nums.length !== 5) return { ok: false, reason: 'need 5' };
+      return { ok: true, values: nums };
+    }
+  </script>
+</body>
+</html> 

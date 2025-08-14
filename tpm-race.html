@@ -76,7 +76,7 @@
 			const rows = g.selectAll('.row').data(data,d=>d.symbol).join(
 				enter => enter.append('g').attr('class','row').attr('transform', d=>`translate(0,${startY(d.symbol)})`)
 					.call(r=>{ r.append('rect').attr('rx',6).attr('height',y.bandwidth()).attr('width',1).attr('fill',d=>getSymbolColor(d.symbol).hex).attr('opacity',0.85);
-						r.append('text').attr('class','label').attr('x',-10).attr('y',y.bandwidth()/2).attr('dominant-baseline','middle').attr('text-anchor','end').attr('fill','#e6eaff').text(d=>d.symbol);
+						r.append('text').attr('class','label').attr('x',-10).attr('y',y.bandwidth()/2).attr('dominant-baseline','middle').attr('text-anchor','end').attr('fill','#e6eaff').style('cursor','pointer').on('click',(ev,d)=>{ const url='https://www.binance.com/en/futures/'+d.symbol; window.open(url,'_blank'); }).text(d=>d.symbol);
 						r.append('text').attr('class','value').attr('x',7).attr('y',y.bandwidth()/2).attr('dominant-baseline','middle').attr('fill','#b7c0e6').text('0'); })
 					.call(r=>r.transition(t).attr('transform', d=>`translate(0,${y(d.symbol)})`).select('rect').attr('width', d=>x(d.count))),
 				update => update.call(r=>r.transition(t).attr('transform', d=>`translate(0,${y(d.symbol)})`)),
@@ -84,7 +84,7 @@
 			).order();
 			rows.select('rect').transition(t).attr('height',y.bandwidth()).attr('width',d=>x(d.count)).attr('fill',d=>getSymbolColor(d.symbol).hex);
 			rows.select('text.value').transition(t).attr('y', y.bandwidth()/2).attr('x', d=>x(d.count)+6).tween('text', function(d){ const that=d3.select(this); const i=d3.interpolateNumber(+that.text().replace(/,/g,'')||0,d.count); return tk=>{ that.text(d3.format(',')(Math.round(i(tk)))); }; });
-			rows.select('text.label').transition(t).attr('y', y.bandwidth()/2).attr('x', d=>{ const w=x(d.count); return w>80?Math.max(10,w-10):-10; }).attr('text-anchor','end').attr('fill', d=>{ const w=x(d.count); if (w>80){ const {rgb}=getSymbolColor(d.symbol); return contrastTextColor(rgb);} return '#e6eaff'; });
+			rows.select('text.label').style('cursor','pointer').on('click',(ev,d)=>{ const url='https://www.binance.com/en/futures/'+d.symbol; window.open(url,'_blank'); }).transition(t).attr('y', y.bandwidth()/2).attr('x', d=>{ const w=x(d.count); return w>80?Math.max(10,w-10):-10; }).attr('text-anchor','end').attr('fill', d=>{ const w=x(d.count); if (w>80){ const {rgb}=getSymbolColor(d.symbol); return contrastTextColor(rgb);} return '#e6eaff'; });
 			gy.transition(t).call(d3.axisLeft(y).tickSize(0).tickFormat(''));
 			prevRank = rankMap(data);
 		}
@@ -130,6 +130,5 @@
 	</script>
 </body>
 </html>
-
 
 

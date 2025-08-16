@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Binance USDT-M Bar Chart Race (≥$50 Trades)</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+	<style>
+		:root { --bg:#0b1020; --fg:#e6eaff; --muted:#aab0c5; --grid:#1a2036; }
+		html,body{ height:100%; margin:0; font-family:'Inter',system-ui,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--fg); }
+		.container{ max-width:1100px; margin:0 auto; padding:24px; }
+		h1{ margin:0 0 8px; font-weight:800; font-size:24px; }
+		p.caption{ margin:0 0 20px; color:var(--muted); font-size:13px; }
+		.chart-wrap{ background:#0f1530; border:1px solid #141a33; border-radius:12px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,0.3); }
+		#chart{ width:100%; height:640px; }
+		.footer{ margin-top:16px; font-size:12px; color:var(--muted); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+		.badge{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background:#10183a; border:1px solid #17224a; color:#b7c0e6; font-size:12px; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<h1>Binance USDT-M Trading Count Bar Chart Race (≥$50 체결)</h1>
+		<p class="caption">Binance Futures · 1분 롤링 윈도우 · 상위 20 심볼 · 50달러 미만 개별 체결 제외</p>
+		<div class="chart-wrap">
+			<div id="chart"></div>
+		</div>
+		<div class="footer">
+			<span class="badge">데이터: Binance trade (개별 체결, $50 미만 제외)</span>
+			<span class="badge" id="status">초기화 중...</span>
+		</div>
+	</div>
+
+	<!-- d3 UMD (글로벌 d3) -->
+	<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+	<script>
+	(function(){
+		// --- Color utilities ---
+		function hashStringToInt(input){ let hash=0; for(let i=0;i<input.length;i++){ hash=((hash<<5)-hash+input.charCodeAt(i))|0; } return Math.abs(hash); }
+		function hslToRgb(h,s,l){ h/=360; s/=100; l/=100; const c=(1-Math.abs(2*l-1))*s; const x=c*(1-Math.abs(((h*6)%2)-1)); const m=l-c/2; let r1=0,g1=0,b1=0; const seg=Math.floor(h*6); switch(seg){case 0:r1=c;g1=x;b1=0;break;case 1:r1=x;g1=c;b1=0;break;case 2:r1=0;g1=c;b1=x;break;case 3:r1=0;g1=x;b1=c;break;case 4:r1=x;g1=0;b1=c;break;case 5:r1=c;g1=0;b1=x;break;} return { r:Math.round((r1+m)*255), g:Math.round((g1+m)*255), b:Math.round((b1+m)*255) }; }
+		function rgbToHex(r,g,b){ return '#' + [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join(''); }
+		function getSymbolColor(symbol){ const base=hashStringToInt(symbol); const hue=base%360; const rgb=hslToRgb(hue,65,52); return { hex:rgbToHex(rgb.r,rgb.g,rgb.b), rgb }; }
+		function contrastTextColor(rgb){ const yiq=(rgb.r*299+rgb.g*587+rgb.b*114)/1000; return yiq>=140?'#000':'#fff'; }
+
+		// --- DOM & Scales ---
+		const container = d3.select('#chart');
+		const statusEl = document.getElementById('status');
+		const margin = { top: 32, right: 80, bottom: 40, left: 140 };
+		function getSize(){ const rect=container.node().getBoundingClientRect(); return { width:Math.max(640,rect.width), height:Math.max(480,rect.height) }; }
+		let { width, height } = getSize();
+		const svg = container.append('svg').attr('width', width).attr('height', height);
+		const plotW = () => width - margin.left - margin.right;
+		const plotH = () => height - margin.top - margin.bottom;
+		const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+		const x = d3.scaleLinear().range([0, plotW()]);
+		const y = d3.scaleBand().range([0, plotH()]).paddingInner(0.15).paddingOuter(0.1).align(0.5);
+		const xAxis = d3.axisTop(x).ticks(5).tickSizeOuter(0);
+		const gx = g.append('g').attr('class','x-axis');
+		const gy = g.append('g').attr('class','y-axis');
+		g.append('g').attr('class','grid').call(d3.axisTop(x).ticks(5).tickSize(-plotH()).tickFormat('')).selectAll('line').attr('stroke','#1a2036');
+
+		let data=[]; let prevRank=new Map();
+		function updateScales(){ const max=d3.max(data,d=>d.count)||1; x.domain([0,max*1.1]).nice(); y.domain(data.map(d=>d.symbol)); }
+		function rankMap(arr){ const m=new Map(); arr.forEach((d,i)=>m.set(d.symbol,i)); return m; }
+		function render(){
+			updateScales();
+			// 빠른 업데이트(예: 100ms)에서 트랜지션 누적을 방지하기 위해 기존 트랜지션 중단
+			svg.interrupt();
+			g.selectAll('.row').interrupt();
+			gx.interrupt(); gy.interrupt(); g.select('.grid').interrupt();
+			const t = svg.transition().duration(Math.max(60, Math.min(600, TICK_MS*0.9))).ease(d3.easeLinear);
+			gx.transition(t).call(xAxis);
+			const bottomY = () => Math.max(0, plotH() - y.bandwidth());
+			const startY = (sym) => prevRank.has(sym) ? prevRank.get(sym) * y.step() : bottomY();
+			const rows = g.selectAll('.row').data(data,d=>d.symbol).join(
+				enter => enter.append('g').attr('class','row').attr('transform', d=>`translate(0,${startY(d.symbol)})`)
+					.call(r=>{ r.append('rect').attr('rx',6).attr('height',y.bandwidth()).attr('width',1).attr('fill',d=>getSymbolColor(d.symbol).hex).attr('opacity',0.85);
+						r.append('text').attr('class','label').attr('x',-10).attr('y',y.bandwidth()/2).attr('dominant-baseline','middle').attr('text-anchor','end').attr('fill','#e6eaff').style('cursor','pointer').on('click',(ev,d)=>{ const url='https://www.binance.com/en/futures/'+d.symbol; window.open(url,'_blank'); }).text(d=>d.symbol);
+						r.append('text').attr('class','value').attr('x',7).attr('y',y.bandwidth()/2).attr('dominant-baseline','middle').attr('fill','#b7c0e6').text('0'); })
+					.call(r=>r.transition(t).attr('transform', d=>`translate(0,${y(d.symbol)})`).select('rect').attr('width', d=>x(d.count))),
+				update => update.call(r=>r.transition(t).attr('transform', d=>`translate(0,${y(d.symbol)})`)),
+				exit => exit.call(r=>r.transition(t).attr('transform', `translate(0,${bottomY()})`).style('opacity',0).remove())
+			).order();
+			rows.select('rect').transition(t).attr('height',y.bandwidth()).attr('width',d=>x(d.count)).attr('fill',d=>getSymbolColor(d.symbol).hex);
+			rows.select('text.value').text(d=>d3.format(',')(d.count)).transition(t).attr('y', y.bandwidth()/2).attr('x', d=>x(d.count)+6);
+			rows.select('text.label').style('cursor','pointer').on('click',(ev,d)=>{ const url='https://www.binance.com/en/futures/'+d.symbol; window.open(url,'_blank'); }).transition(t).attr('y', y.bandwidth()/2).attr('x', d=>{ const w=x(d.count); return w>80?Math.max(10,w-10):-10; }).attr('text-anchor','end').attr('fill', d=>{ const w=x(d.count); if (w>80){ const {rgb}=getSymbolColor(d.symbol); return contrastTextColor(rgb);} return '#e6eaff'; });
+			gy.transition(t).call(d3.axisLeft(y).tickSize(0).tickFormat(''));
+			prevRank = rankMap(data);
+		}
+
+		// --- Data layer ---
+		const BINANCE_FAPI='https://fapi.binance.com';
+		const BINANCE_WS_BASE='wss://fstream.binance.com/stream?streams=';
+		const MAX_STREAMS_PER_CONN=1024; const WINDOW_MS=60_000; const TICK_MS=100;
+		const symbolToTrades=new Map();
+		const symbolToMinQty=new Map(); // 최소 체결 수량(= $5 / 초기가격)
+		let lastTopSymbols = [];
+		function now(){ return Date.now(); }
+		function prune(symbol){ const q=symbolToTrades.get(symbol); if(!q) return 0; const cutoff=now()-WINDOW_MS; while(q.length && q[0].t<cutoff) q.shift(); let s=0; for(const p of q) s+=p.count; return s; }
+		function addCount(symbol,t,count){ let q=symbolToTrades.get(symbol); if(!q){ q=[]; symbolToTrades.set(symbol,q);} q.push({t,count}); return prune(symbol); }
+		function computeTop(){ const out=[]; const cutoff=now()-WINDOW_MS; for(const [sym,q] of symbolToTrades.entries()){ let i=0,sum=0; while(i<q.length && q[i].t<cutoff) i++; if(i>0) q.splice(0,i); for(const it of q) sum+=it.count; if(sum>0) out.push({symbol:sym,count:sum}); } out.sort((a,b)=>b.count-a.count); return out.slice(0,20); }
+		function chunk(arr,n){ const out=[]; for(let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out; }
+		async function fetchUSDTPerpSymbols(){ const res=await fetch(`${BINANCE_FAPI}/fapi/v1/exchangeInfo`); const j=await res.json(); return j.symbols.filter(s=>s.contractType==='PERPETUAL' && s.quoteAsset==='USDT' && s.status==='TRADING').map(s=>s.symbol); }
+		async function fetchTickerPrices(){ const res=await fetch(`${BINANCE_FAPI}/fapi/v1/ticker/price`); const j=await res.json(); const m=new Map(); for(const it of j){ const sym=it.symbol; const p=Number(it.price); if(Number.isFinite(p) && p>0) m.set(sym,p); } return m; }
+		function openMultiStream(symbols){ const url=BINANCE_WS_BASE + symbols.map(s=>`${s.toLowerCase()}@trade`).join('/'); const ws=new WebSocket(url); ws.onopen=()=>{ statusEl.textContent=`연결됨: ${symbols.length}개 스트림`; }; ws.onmessage=(ev)=>{ try{ const msg=JSON.parse(ev.data); const d=msg.data; if(!d||d.e!=='trade') return; const symbol=d.s; const qty=Number(d.q||d.qty||0); const t=d.E||now(); let minQty=symbolToMinQty.get(symbol); if(minQty===undefined){ const price=Number(d.p||0); if(Number.isFinite(price) && price>0){ minQty=5/price; symbolToMinQty.set(symbol,minQty); } }
+				if(!Number.isFinite(qty) || qty<=0) return; if(minQty!==undefined && qty<minQty) return; addCount(symbol,t,1);
+			} catch(e){} }; ws.onclose=()=>{ statusEl.textContent='연결 종료, 재연결 중...'; setTimeout(()=>openMultiStream(symbols),1500); }; ws.onerror=()=>{ statusEl.textContent='오류'; }; }
+		function computeStableTop(){
+			const currentTop = computeTop();
+			const set = new Set([...lastTopSymbols, ...currentTop.map(d=>d.symbol)]);
+			const cutoff = now() - WINDOW_MS;
+			const candidates = [];
+			for (const sym of set) {
+				const q = symbolToTrades.get(sym) || [];
+				let i=0, sum=0;
+				while (i < q.length && q[i].t < cutoff) i++;
+				if (i > 0) q.splice(0, i);
+				for (const it of q) sum += it.count;
+				candidates.push({ symbol: sym, count: sum });
+			}
+			candidates.sort((a,b)=>b.count-a.count);
+			const finalTop = candidates.slice(0,20);
+			lastTopSymbols = finalTop.map(d=>d.symbol);
+			return finalTop;
+		}
+
+		function tick(){ data = computeStableTop(); render(); }
+		async function boot(){
+			statusEl.textContent='심볼/가격 가져오는 중...';
+			const [symbols, priceMap] = await Promise.all([fetchUSDTPerpSymbols(), fetchTickerPrices()]);
+			statusEl.textContent=`심볼 ${symbols.length}개`;
+			for(const sym of symbols){ const p=priceMap.get(sym); if(p && Number.isFinite(p) && p>0){ symbolToMinQty.set(sym, 50/p); } }
+			for(const group of chunk(symbols, Math.min(MAX_STREAMS_PER_CONN,1024))){ openMultiStream(group); }
+			setInterval(tick, TICK_MS);
+		}
+		window.addEventListener('resize', ()=>{ clearTimeout(window.__rt); window.__rt=setTimeout(()=>{ const s=getSize(); width=s.width; height=s.height; svg.attr('width',width).attr('height',height); x.range([0,plotW()]); y.range([0,plotH()]); g.select('.grid').call(d3.axisTop(x).ticks(5).tickSize(-plotH()).tickFormat('')).selectAll('line').attr('stroke','#1a2036'); render(); },150); });
+		boot();
+		render();
+	})();
+	</script>
+</body>
+</html>
+
+

@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>USDT-M 1분 거래수 5000+ (Simple)</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+	<style>
+		:root { --fg:#e6eaff; --muted:#aab0c5; }
+		html,body{ height:100%; margin:0; background:#0b1020; color:var(--fg); font-family:'Inter',system-ui,Segoe UI,Roboto,Arial,sans-serif; }
+		.app{ min-height:100%; display:flex; flex-direction:column; }
+		.header{ padding:12px 16px; display:flex; justify-content:space-between; align-items:center; }
+		.title{ margin:0; font-size:18px; font-weight:800; }
+		.status{ font-size:12px; color:var(--muted); }
+		.list{ display:flex; flex-direction:column; gap:8px; padding:8px 16px 24px; }
+		.item{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; background:#0f1530; border:1px solid #141a33; border-radius:10px; }
+		.item .left{ display:flex; align-items:center; gap:10px; }
+		.badge{ padding:4px 8px; border-radius:6px; font-weight:600; }
+		.count{ font-variant-numeric:tabular-nums; color:#b7c0e6; }
+		.fullscreen-btn{ position:fixed; top:12px; right:12px; z-index:1000; padding:8px 10px; background:#10183a; color:#b7c0e6; border:1px solid #17224a; border-radius:8px; cursor:pointer; }
+		body.blackout{ background:#000 !important; }
+		body.blackout .app{ display:none; }
+	</style>
+</head>
+<body>
+	<button id="fullscreenBtn" class="fullscreen-btn">전체화면</button>
+	<div class="app" id="app">
+		<div class="header">
+			<h1 class="title">USDT-M 분당 거래수 5000+</h1>
+			<div class="status" id="status">초기화 중...</div>
+		</div>
+		<div class="list" id="list"></div>
+	</div>
+	<script>
+	(function(){
+		const THRESHOLD = 5000;
+		const WINDOW_MS = 60_000;
+		const TICK_MS = 200;
+		const MAX_STREAMS_PER_CONN = 1024;
+		const BINANCE_FAPI = 'https://fapi.binance.com';
+		const BINANCE_WS_BASE = 'wss://fstream.binance.com/stream?streams=';
+
+		function hashStringToInt(input){ let hash=0; for(let i=0;i<input.length;i++){ hash=((hash<<5)-hash+input.charCodeAt(i))|0; } return Math.abs(hash); }
+		function hslToRgb(h,s,l){ h/=360; s/=100; l/=100; const c=(1-Math.abs(2*l-1))*s; const x=c*(1-Math.abs(((h*6)%2)-1)); const m=l-c/2; let r1=0,g1=0,b1=0; const seg=Math.floor(h*6); switch(seg){case 0:r1=c;g1=x;b1=0;break;case 1:r1=x;g1=c;b1=0;break;case 2:r1=0;g1=c;b1=x;break;case 3:r1=0;g1=x;b1=c;break;case 4:r1=x;g1=0;b1=c;break;case 5:r1=c;g1=0;b1=x;break;} return { r:Math.round((r1+m)*255), g:Math.round((g1+m)*255), b:Math.round((b1+m)*255) }; }
+		function rgbToHex(r,g,b){ return '#' + [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join(''); }
+		function getSymbolColor(symbol){ const base=hashStringToInt(symbol); const hue=base%360; const rgb=hslToRgb(hue,65,52); return { hex:rgbToHex(rgb.r,rgb.g,rgb.b), rgb }; }
+		function contrastTextColor(rgb){ const yiq=(rgb.r*299+rgb.g*587+rgb.b*114)/1000; return yiq>=140?'#000':'#fff'; }
+
+		const statusEl = document.getElementById('status');
+		const listEl = document.getElementById('list');
+		const symbolToTrades = new Map();
+
+		function now(){ return Date.now(); }
+
+		function addCount(symbol,t,count){
+			let q = symbolToTrades.get(symbol);
+			if(!q){ q=[]; symbolToTrades.set(symbol,q); }
+			q.push({t,count});
+			return prune(symbol);
+		}
+
+		function prune(symbol){
+			const q = symbolToTrades.get(symbol);
+			if(!q) return 0;
+			const cutoff = now() - WINDOW_MS;
+			while(q.length && q[0].t < cutoff) q.shift();
+			let sum = 0;
+			for(const p of q) sum += p.count;
+			return sum;
+		}
+
+		function computeAboveThreshold(){
+			const cutoff = now() - WINDOW_MS;
+			const out = [];
+			for(const [sym, q] of symbolToTrades.entries()){
+				let i = 0, sum = 0;
+				while(i < q.length && q[i].t < cutoff) i++;
+				if(i>0) q.splice(0,i);
+				for(const it of q) sum += it.count;
+				if(sum >= THRESHOLD) out.push({symbol:sym, count:sum});
+			}
+			out.sort((a,b)=>b.count-a.count);
+			return out;
+		}
+
+		async function fetchUSDTPerpSymbols(){
+			const res = await fetch(`${BINANCE_FAPI}/fapi/v1/exchangeInfo`);
+			const j = await res.json();
+			return j.symbols.filter(s=>s.contractType==='PERPETUAL' && s.quoteAsset==='USDT' && s.status==='TRADING').map(s=>s.symbol);
+		}
+
+		function openMultiStream(symbols){
+			const url = BINANCE_WS_BASE + symbols.map(s=>`${s.toLowerCase()}@aggTrade`).join('/');
+			const ws = new WebSocket(url);
+			ws.onopen = () => { statusEl.textContent = `연결됨: ${symbols.length}개`; };
+			ws.onmessage = (ev) => {
+				try{
+					const msg = JSON.parse(ev.data);
+					const d = msg.data;
+					if(!d || d.e !== 'aggTrade') return;
+					const symbol = d.s;
+					const cnt = (d.l - d.f + 1) | 0;
+					const t = d.E || now();
+					addCount(symbol, t, cnt);
+				}catch(e){}
+			};
+			ws.onclose = () => { statusEl.textContent = '연결 종료, 재연결...'; setTimeout(()=>openMultiStream(symbols), 1500); };
+			ws.onerror = () => { statusEl.textContent = '연결 오류'; };
+		}
+
+		function formatNumber(num){ return num.toLocaleString('en-US'); }
+
+		function render(){
+			const items = computeAboveThreshold();
+			if(items.length === 0){
+				document.body.classList.add('blackout');
+				listEl.innerHTML = '';
+				statusEl.textContent = '조건 충족 심볼 없음 (블랙스크린)';
+				return;
+			}
+			document.body.classList.remove('blackout');
+			statusEl.textContent = `${items.length}개 심볼 표시 중`;
+			const frag = document.createDocumentFragment();
+			items.forEach((d, idx) => {
+				const {hex, rgb} = getSymbolColor(d.symbol);
+				const item = document.createElement('div');
+				item.className = 'item';
+				const left = document.createElement('div');
+				left.className = 'left';
+				const rank = document.createElement('div');
+				rank.className = 'badge';
+				rank.textContent = String(idx+1);
+				rank.style.backgroundColor = '#10183a';
+				rank.style.border = '1px solid #17224a';
+				rank.style.color = '#b7c0e6';
+
+				const sym = document.createElement('div');
+				sym.textContent = d.symbol;
+				sym.style.padding = '4px 8px';
+				sym.style.borderRadius = '6px';
+				sym.style.backgroundColor = hex;
+				sym.style.color = contrastTextColor(rgb);
+				sym.style.fontWeight = '600';
+
+				left.appendChild(rank);
+				left.appendChild(sym);
+
+				const count = document.createElement('div');
+				count.className = 'count';
+				count.textContent = formatNumber(d.count);
+
+				item.appendChild(left);
+				item.appendChild(count);
+				frag.appendChild(item);
+			});
+			listEl.innerHTML = '';
+			listEl.appendChild(frag);
+		}
+
+		async function boot(){
+			statusEl.textContent = '심볼 목록 가져오는 중...';
+			const symbols = await fetchUSDTPerpSymbols();
+			statusEl.textContent = `심볼 ${symbols.length}개`;
+			for(let i=0; i<symbols.length; i+=MAX_STREAMS_PER_CONN){
+				openMultiStream(symbols.slice(i, i+MAX_STREAMS_PER_CONN));
+			}
+			setInterval(render, TICK_MS);
+		}
+
+		const fsBtn = document.getElementById('fullscreenBtn');
+		function updateFsBtn(){ fsBtn.textContent = document.fullscreenElement ? '전체화면 해제' : '전체화면'; }
+		fsBtn.addEventListener('click', ()=>{
+			if(!document.fullscreenElement){
+				(document.documentElement.requestFullscreen && document.documentElement.requestFullscreen()) ||
+				(document.documentElement.webkitRequestFullscreen && document.documentElement.webkitRequestFullscreen());
+			}else{
+				(document.exitFullscreen && document.exitFullscreen()) ||
+				(document.webkitExitFullscreen && document.webkitExitFullscreen());
+			}
+		});
+		document.addEventListener('fullscreenchange', updateFsBtn);
+
+		boot();
+		render();
+	})();
+	</script>
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>USDT-M 1분 거래수 5000+ (Simple)</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+	<style>
+		:root { --fg:#e6eaff; --muted:#aab0c5; }
+		html,body{ height:100%; margin:0; background:#0b1020; color:var(--fg); font-family:'Inter',system-ui,Segoe UI,Roboto,Arial,sans-serif; }
+		.app{ min-height:100%; display:flex; flex-direction:column; }
+		.header{ padding:12px 16px; display:flex; justify-content:space-between; align-items:center; }
+		.title{ margin:0; font-size:18px; font-weight:800; }
+		.status{ font-size:12px; color:var(--muted); }
+		.list{ display:flex; flex-direction:column; gap:8px; padding:8px 16px 24px; }
+		.item{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; background:#0f1530; border:1px solid #141a33; border-radius:10px; }
+		.item .left{ display:flex; align-items:center; gap:10px; }
+		.badge{ padding:4px 8px; border-radius:6px; font-weight:600; }
+		.count{ font-variant-numeric:tabular-nums; color:#b7c0e6; }
+		.fullscreen-btn{ position:fixed; top:12px; right:12px; z-index:1000; padding:8px 10px; background:#10183a; color:#b7c0e6; border:1px solid #17224a; border-radius:8px; cursor:pointer; }
+		body.blackout{ background:#000 !important; }
+		body.blackout .app{ display:none; }
+	</style>
+</head>
+<body>
+	<button id="fullscreenBtn" class="fullscreen-btn">전체화면</button>
+	<div class="app" id="app">
+		<div class="header">
+			<h1 class="title">USDT-M 분당 거래수 5000+</h1>
+			<div class="status" id="status">초기화 중...</div>
+		</div>
+		<div class="list" id="list"></div>
+	</div>
+	<script>
+	(function(){
+		const THRESHOLD = 5000;
+		const WINDOW_MS = 60_000;
+		const TICK_MS = 200;
+		const MAX_STREAMS_PER_CONN = 1024;
+		const BINANCE_FAPI = 'https://fapi.binance.com';
+		const BINANCE_WS_BASE = 'wss://fstream.binance.com/stream?streams=';
+
+		function hashStringToInt(input){ let hash=0; for(let i=0;i<input.length;i++){ hash=((hash<<5)-hash+input.charCodeAt(i))|0; } return Math.abs(hash); }
+		function hslToRgb(h,s,l){ h/=360; s/=100; l/=100; const c=(1-Math.abs(2*l-1))*s; const x=c*(1-Math.abs(((h*6)%2)-1)); const m=l-c/2; let r1=0,g1=0,b1=0; const seg=Math.floor(h*6); switch(seg){case 0:r1=c;g1=x;b1=0;break;case 1:r1=x;g1=c;b1=0;break;case 2:r1=0;g1=c;b1=x;break;case 3:r1=0;g1=x;b1=c;break;case 4:r1=x;g1=0;b1=c;break;case 5:r1=c;g1=0;b1=x;break;} return { r:Math.round((r1+m)*255), g:Math.round((g1+m)*255), b:Math.round((b1+m)*255) }; }
+		function rgbToHex(r,g,b){ return '#' + [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join(''); }
+		function getSymbolColor(symbol){ const base=hashStringToInt(symbol); const hue=base%360; const rgb=hslToRgb(hue,65,52); return { hex:rgbToHex(rgb.r,rgb.g,rgb.b), rgb }; }
+		function contrastTextColor(rgb){ const yiq=(rgb.r*299+rgb.g*587+rgb.b*114)/1000; return yiq>=140?'#000':'#fff'; }
+
+		const statusEl = document.getElementById('status');
+		const listEl = document.getElementById('list');
+		const symbolToTrades = new Map();
+
+		function now(){ return Date.now(); }
+
+		function addCount(symbol,t,count){
+			let q = symbolToTrades.get(symbol);
+			if(!q){ q=[]; symbolToTrades.set(symbol,q); }
+			q.push({t,count});
+			return prune(symbol);
+		}
+
+		function prune(symbol){
+			const q = symbolToTrades.get(symbol);
+			if(!q) return 0;
+			const cutoff = now() - WINDOW_MS;
+			while(q.length && q[0].t < cutoff) q.shift();
+			let sum = 0;
+			for(const p of q) sum += p.count;
+			return sum;
+		}
+
+		function computeAboveThreshold(){
+			const cutoff = now() - WINDOW_MS;
+			const out = [];
+			for(const [sym, q] of symbolToTrades.entries()){
+				let i = 0, sum = 0;
+				while(i < q.length && q[i].t < cutoff) i++;
+				if(i>0) q.splice(0,i);
+				for(const it of q) sum += it.count;
+				if(sum >= THRESHOLD) out.push({symbol:sym, count:sum});
+			}
+			out.sort((a,b)=>b.count-a.count);
+			return out;
+		}
+
+		async function fetchUSDTPerpSymbols(){
+			const res = await fetch(`${BINANCE_FAPI}/fapi/v1/exchangeInfo`);
+			const j = await res.json();
+			return j.symbols.filter(s=>s.contractType==='PERPETUAL' && s.quoteAsset==='USDT' && s.status==='TRADING').map(s=>s.symbol);
+		}
+
+		function openMultiStream(symbols){
+			const url = BINANCE_WS_BASE + symbols.map(s=>`${s.toLowerCase()}@aggTrade`).join('/');
+			const ws = new WebSocket(url);
+			ws.onopen = () => { statusEl.textContent = `연결됨: ${symbols.length}개`; };
+			ws.onmessage = (ev) => {
+				try{
+					const msg = JSON.parse(ev.data);
+					const d = msg.data;
+					if(!d || d.e !== 'aggTrade') return;
+					const symbol = d.s;
+					const cnt = (d.l - d.f + 1) | 0;
+					const t = d.E || now();
+					addCount(symbol, t, cnt);
+				}catch(e){}
+			};
+			ws.onclose = () => { statusEl.textContent = '연결 종료, 재연결...'; setTimeout(()=>openMultiStream(symbols), 1500); };
+			ws.onerror = () => { statusEl.textContent = '연결 오류'; };
+		}
+
+		function d3format(num){
+			return num.toLocaleString('en-US');
+		}
+
+		function render(){
+			const items = computeAboveThreshold();
+			if(items.length === 0){
+				document.body.classList.add('blackout');
+				listEl.innerHTML = '';
+				statusEl.textContent = '조건 충족 심볼 없음 (블랙스크린)';
+				return;
+			}
+			document.body.classList.remove('blackout');
+			statusEl.textContent = `${items.length}개 심볼 표시 중`;
+			const frag = document.createDocumentFragment();
+			items.forEach((d, idx) => {
+				const {hex, rgb} = getSymbolColor(d.symbol);
+				const item = document.createElement('div');
+				item.className = 'item';
+				const left = document.createElement('div');
+				left.className = 'left';
+				const rank = document.createElement('div');
+				rank.className = 'badge';
+				rank.textContent = String(idx+1);
+				rank.style.backgroundColor = '#10183a';
+				rank.style.border = '1px solid #17224a';
+				rank.style.color = '#b7c0e6';
+
+				const sym = document.createElement('div');
+				sym.textContent = d.symbol;
+				sym.style.padding = '4px 8px';
+				sym.style.borderRadius = '6px';
+				sym.style.backgroundColor = hex;
+				sym.style.color = contrastTextColor(rgb);
+				sym.style.fontWeight = '600';
+
+				left.appendChild(rank);
+				left.appendChild(sym);
+
+				const count = document.createElement('div');
+				count.className = 'count';
+				count.textContent = d3format(d.count);
+
+				item.appendChild(left);
+				item.appendChild(count);
+				frag.appendChild(item);
+			});
+			listEl.innerHTML = '';
+			listEl.appendChild(frag);
+		}
+
+		async function boot(){
+			statusEl.textContent = '심볼 목록 가져오는 중...';
+			const symbols = await fetchUSDTPerpSymbols();
+			statusEl.textContent = `심볼 ${symbols.length}개`;
+			for(let i=0; i<symbols.length; i+=MAX_STREAMS_PER_CONN){
+				openMultiStream(symbols.slice(i, i+MAX_STREAMS_PER_CONN));
+			}
+			setInterval(render, TICK_MS);
+		}
+
+		const fsBtn = document.getElementById('fullscreenBtn');
+		function updateFsBtn(){ fsBtn.textContent = document.fullscreenElement ? '전체화면 해제' : '전체화면'; }
+		fsBtn.addEventListener('click', ()=>{
+			if(!document.fullscreenElement){
+				(document.documentElement.requestFullscreen && document.documentElement.requestFullscreen()) ||
+				(document.documentElement.webkitRequestFullscreen && document.documentElement.webkitRequestFullscreen());
+			}else{
+				(document.exitFullscreen && document.exitFullscreen()) ||
+				(document.webkitExitFullscreen && document.webkitExitFullscreen());
+			}
+		});
+		document.addEventListener('fullscreenchange', updateFsBtn);
+
+		boot();
+		render();
+	})();
+	</script>
+</body>
+</html>
+
+

@@ -322,7 +322,7 @@
         }
         function isValidSymbol(sym) {
             // Basic validation: UPPERCASE and ends with USDT, 5+ chars
-            return /^[A-Z0-9]{3,}USDT$/.test(sym);
+            return /^[A-Z0-9]{1,}USD(T|C)$/.test(sym);
         }
 
         // ------------------------------

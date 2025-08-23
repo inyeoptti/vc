@@ -85,6 +85,8 @@
         backdrop-filter: none;
         box-shadow: none;
       }
+      .chip.button { cursor: pointer; color: var(--text); user-select: none; }
+      .chip.button:hover { color: #ffffff; }
       #statusText { color: var(--text); font-weight: 600; }
       .controls .chip:not(:last-child)::after { content: '·'; margin: 0 8px; color: var(--muted); opacity: 0.6; }
       main {
@@ -190,6 +192,7 @@
         <span id="loadedCount" class="chip">초기 캔들: 0</span>
         <span id="wsState" class="chip">WS: -</span>
         <span class="chip">조건: prev BBW ≤ 0.02 && 현 봉 +1% 최초 돌파</span>
+        <span id="soundToggle" class="chip button" title="알림 소리 토글">🔈 소리 끔</span>
       </div>
     </header>
     <main>
@@ -221,6 +224,29 @@
     </div>
 
     <script type="module">
+      // 알림 소리 (Web Audio) 설정
+      let audioCtx = null;
+      let soundEnabled = false;
+      function ensureAudio() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      function playDing() {
+        if (!soundEnabled) return;
+        ensureAudio();
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        // 짧은 딩: 두 톤 글리산도
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.exponentialRampToValueAtTime(1320, now + 0.12);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.15, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.25);
+      }
       const API_BASE = 'https://fapi.binance.com';
       const WS_BASE = 'wss://fstream.binance.com/stream';
       const INTERVAL = '1m';
@@ -239,11 +265,25 @@
         resultsBody: document.getElementById('resultsBody'),
         footerStatus: document.getElementById('footerStatus'),
         recentDetections: document.getElementById('recentDetections'),
+        soundToggle: document.getElementById('soundToggle'),
       };
 
       function setStatus(text) {
         dom.statusText.textContent = text;
         dom.footerStatus.textContent = text;
+      }
+
+      // 소리 토글 이벤트 (첫 클릭 시 오디오 컨텍스트 활성화)
+      if (dom.soundToggle) {
+        dom.soundToggle.addEventListener('click', async () => {
+          try {
+            ensureAudio();
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
+          } catch {}
+          soundEnabled = !soundEnabled;
+          dom.soundToggle.textContent = soundEnabled ? '🔊 소리 켬' : '🔈 소리 끔';
+          if (soundEnabled) playDing();
+        });
       }
 
       function fmtNumber(n, digits = 2) {
@@ -467,6 +507,10 @@
           bbwIncrease,
           minute: curr.openTime,
         });
+        // 알림 소리 조건: 볼륨 >= 100,000 && Z >= 2
+        if (curr.quoteVolume >= 100000 && volZ >= 2) {
+          playDing();
+        }
         reportedByCandle.set(key, true);
       }
 

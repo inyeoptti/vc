@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="ko" class="h-full">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Binance Futures Watch</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        bg: {
+                            DEFAULT: '#0b1020',
+                            light: '#0f172a'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        html,
+        body {
+            height: 100%;
+        }
+
+        .card-grid {
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        }
+
+        .chart {
+            width: 100%;
+            height: 120px;
+        }
+
+        .chart-sm {
+            height: 80px;
+        }
+
+        .tooltip {
+            pointer-events: none;
+        }
+
+        details>summary::-webkit-details-marker {
+            display: none;
+        }
+
+        details[open] .chev {
+            transform: rotate(90deg);
+        }
+
+        /* Horizontal scrollbar styling for cards container */
+        #cards {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(100, 116, 139, .5) transparent;
+        }
+
+        .dark #cards {
+            scrollbar-color: rgba(148, 163, 184, .5) transparent;
+        }
+
+        #cards::-webkit-scrollbar {
+            height: 10px;
+        }
+
+        #cards::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #cards::-webkit-scrollbar-thumb {
+            background-color: rgba(100, 116, 139, .5);
+            /* slate-500/50 */
+            border-radius: 9999px;
+            border: 2px solid transparent;
+            background-clip: padding-box;
+        }
+
+        .dark #cards::-webkit-scrollbar-thumb {
+            background-color: rgba(148, 163, 184, .5);
+            /* slate-400/50 */
+        }
+
+        /* Remove hover color changes for consistent feel */
+        #cards::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(100, 116, 139, .5);
+        }
+
+        .dark #cards::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(148, 163, 184, .5);
+        }
+    </style>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+
+<body class="h-full bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
+    <div class="mx-auto p-4 space-y-4">
+        <header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div class="space-y-2">
+                <h1 class="text-2xl font-bold">Binance Futures Watch</h1>
+                <!-- <p class="text-sm text-slate-500 dark:text-slate-400">심볼 추가 후 카드를 확장하면 차트가 로드됩니다. 60초마다 자동 갱신.</p> -->
+            </div>
+            <div class="flex flex-wrap gap-2 items-center">
+                <div class="flex items-stretch gap-2">
+                    <input id="symbol-input" type="text" placeholder="예: BTCUSDT"
+                        class="px-3 py-2 rounded border dark:border-slate-700 bg-white dark:bg-slate-900" />
+                    <button id="add-symbol"
+                        class="px-3 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-500">추가</button>
+                </div>
+                <input id="search-input" type="text" placeholder="검색 (심볼)"
+                    class="px-3 py-2 rounded border dark:border-slate-700 bg-white dark:bg-slate-900" />
+                <select id="tf-select" class="px-3 py-2 rounded border dark:border-slate-700 bg-white dark:bg-slate-900">
+                    <option value="5m">5m</option>
+                    <option value="15m">15m</option>
+                    <option value="1h">1h</option>
+                    <option value="4h">4h</option>
+                </select>
+                <button id="export-state" class="px-3 py-2 rounded border dark:border-slate-700">내보내기</button>
+                <button id="import-state" class="px-3 py-2 rounded border dark:border-slate-700">불러오기</button>
+                <button id="theme-toggle" class="px-3 py-2 rounded border dark:border-slate-700">라이트/다크</button>
+            </div>
+        </header>
+
+        <main>
+            <div id="cards" class="flex gap-4 overflow-x-auto pb-2"></div>
+        </main>
+    </div>
+
+    <div id="toast-root" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+    <!-- Import Modal -->
+    <div id="import-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50">
+        <div class="w-[90vw] max-w-2xl rounded bg-white dark:bg-slate-900 border dark:border-slate-800 p-4 shadow">
+            <h2 class="text-lg font-semibold mb-2">불러오기</h2>
+            <p class="text-xs text-slate-500 mb-2">JSON을 붙여넣고 적용을 누르세요.</p>
+            <textarea id="import-textarea"
+                class="w-full h-60 px-3 py-2 rounded border dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-xs"
+                placeholder='{"theme":"auto","watchlist":["BTCUSDT"],"notes":{}}'></textarea>
+            <div class="mt-3 flex justify-end gap-2">
+                <button id="import-cancel" class="px-3 py-2 rounded border dark:border-slate-700">취소</button>
+                <button id="import-apply" class="px-3 py-2 rounded bg-indigo-600 text-white">적용</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ------------------------------
+        // State & Storage
+        // ------------------------------
+        const STORAGE_KEY = 'bcp_state_v1';
+        const DEFAULT_STATE = {
+            theme: 'auto', // 'light' | 'dark' | 'auto'
+            timeframe: '5m', // '5m' | '15m' | '1h' | '4h'
+            watchlist: ['BTCUSDT', 'ETHUSDT'],
+            notes: {}, // { [symbol]: [{ ts, text }] }
+            cache: {
+                // [symbol]: { klines: { ts, data }, oi: { ts, data } }
+            }
+        };
+
+        let appState = loadState();
+        applyTheme(appState.theme);
+
+        function loadState() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return structuredClone(DEFAULT_STATE);
+                const parsed = JSON.parse(raw);
+                return { ...structuredClone(DEFAULT_STATE), ...parsed };
+            } catch (e) {
+                console.warn('loadState error', e);
+                return structuredClone(DEFAULT_STATE);
+            }
+        }
+
+        function saveState() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+            } catch (e) {
+                console.warn('saveState error', e);
+            }
+        }
+
+        function applyTheme(mode) {
+            const root = document.documentElement;
+            const preferDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const isDark = mode === 'dark' || (mode === 'auto' && preferDark);
+            root.classList.toggle('dark', isDark);
+        }
+
+        // ------------------------------
+        // Export / Import
+        // ------------------------------
+        function getRawStateJSON() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                let stateObj;
+                if (raw) {
+                    stateObj = JSON.parse(raw);
+                } else {
+                    stateObj = structuredClone(appState);
+                }
+                // cache 제외
+                stateObj.cache = undefined;
+                return JSON.stringify(stateObj);
+            } catch (_) {
+                const stateObj = structuredClone(appState);
+                stateObj.cache = undefined;
+                return JSON.stringify(stateObj);
+            }
+        }
+
+        async function copyToClipboard(text) {
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                }
+            } catch (_) { }
+            // Fallback
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.top = '-1000px';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function normalizeImportedNotes(notesObj) {
+            const out = {};
+            if (!notesObj || typeof notesObj !== 'object') return out;
+            Object.keys(notesObj).forEach(sym => {
+                const list = Array.isArray(notesObj[sym]) ? notesObj[sym] : [];
+                const clean = list.map(n => ({ ts: Number(n.ts), text: String(n.text || '').trim() }))
+                    .filter(n => Number.isFinite(n.ts) && n.text.length > 0)
+                    .sort((a, b) => a.ts - b.ts);
+                if (clean.length) out[normalizeSymbol(sym)] = clean;
+            });
+            return out;
+        }
+
+        function validateImportedState(input) {
+            if (!input || typeof input !== 'object') throw new Error('JSON 객체가 아닙니다');
+
+            const next = structuredClone(DEFAULT_STATE);
+
+            // theme
+            if (typeof input.theme === 'string' && ['light', 'dark', 'auto'].includes(input.theme)) {
+                next.theme = input.theme;
+            }
+
+            // watchlist
+            if (Array.isArray(input.watchlist)) {
+                const list = input.watchlist
+                    .map(s => normalizeSymbol(String(s)))
+                    .filter(isValidSymbol);
+                const uniq = Array.from(new Set(list));
+                if (uniq.length === 0) throw new Error('watchlist가 비어있거나 유효하지 않습니다');
+                next.watchlist = uniq;
+            }
+
+            // timeframe
+            if (typeof input.timeframe === 'string' && ['5m', '15m', '1h', '4h'].includes(input.timeframe)) {
+                next.timeframe = input.timeframe;
+            }
+
+            // notes
+            if (input.notes) {
+                next.notes = normalizeImportedNotes(input.notes);
+            }
+
+            // cache는 안전을 위해 초기화
+            next.cache = {};
+
+            return next;
+        }
+
+        function showImportModal() {
+            const modal = document.getElementById('import-modal');
+            const ta = document.getElementById('import-textarea');
+            ta.value = getRawStateJSON();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function hideImportModal() {
+            const modal = document.getElementById('import-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // ------------------------------
+        // Toasts
+        // ------------------------------
+        function showToast(message, type = 'info') {
+            const root = document.getElementById('toast-root');
+            const el = document.createElement('div');
+            const color = type === 'error' ? 'bg-red-600' : type === 'success' ? 'bg-green-600' : 'bg-slate-800';
+            el.className = `text-white ${color} px-3 py-2 rounded shadow text-sm animate-fade`;
+            el.textContent = message;
+            root.appendChild(el);
+            setTimeout(() => {
+                el.remove();
+            }, 3000);
+        }
+
+        // ------------------------------
+        // Validation
+        // ------------------------------
+        function normalizeSymbol(input) {
+            return (input || '').trim().toUpperCase();
+        }
+        function isValidSymbol(sym) {
+            // Basic validation: UPPERCASE and ends with USDT, 5+ chars
+            return /^[A-Z0-9]{3,}USDT$/.test(sym);
+        }
+
+        // ------------------------------
+        // Number formatting
+        // ------------------------------
+        function formatLargeNumber(price) {
+            const v = Math.abs(Number(price));
+            if (!Number.isFinite(v)) return String(price);
+            if (v >= 1_000_000_000) return Math.round(price / 1_000_000_000) + 'B';
+            if (v >= 1_000_000) return Math.round(price / 1_000_000) + 'M';
+            if (v >= 1_000) return Math.round(price / 1_000) + 'K';
+            return String(Math.round(price));
+        }
+
+        // ------------------------------
+        // Binance API helpers (USDT-M Futures)
+        // ------------------------------
+        const API_BASE = 'https://fapi.binance.com';
+        const ENDPOINTS = {
+            klines: (symbol, interval = '5m', limit = 100) => `${API_BASE}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+            oi: (symbol, period = '5m', limit = 100) => `${API_BASE}/futures/data/openInterestHist?symbol=${symbol}&period=${period}&contractType=PERPETUAL&limit=${limit}`,
+            funding: (symbol, startTime = null, limit = 100) => {
+                const params = new URLSearchParams({ symbol, limit: String(limit) });
+                if (startTime) params.set('startTime', String(startTime));
+                return `${API_BASE}/fapi/v1/fundingRate?${params.toString()}`;
+            }
+        };
+
+        const RATE_LIMIT_MS = 800; // simple spacing between requests
+        let lastRequestAt = 0;
+
+        async function rateLimitDelay() {
+            const now = Date.now();
+            const elapsed = now - lastRequestAt;
+            if (elapsed < RATE_LIMIT_MS) {
+                await new Promise(r => setTimeout(r, RATE_LIMIT_MS - elapsed));
+            }
+            lastRequestAt = Date.now();
+        }
+
+        async function fetchWithRetry(url, opts = {}, retries = 3, backoffMs = 500) {
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                try {
+                    await rateLimitDelay();
+                    const res = await fetch(url, { method: 'GET', ...opts });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    return await res.json();
+                } catch (e) {
+                    if (attempt === retries) throw e;
+                    await new Promise(r => setTimeout(r, backoffMs * Math.pow(2, attempt)));
+                }
+            }
+        }
+
+        // ------------------------------
+        // Data fetchers with caching
+        // ------------------------------
+        const CACHE_TTL_MS = 45 * 1000; // serve cache within 45s as fresh
+
+        function getCache(symbol, key) {
+            const sym = appState.cache[symbol];
+            if (!sym) return null;
+            return sym[key] || null;
+        }
+        function setCache(symbol, key, payload) {
+            appState.cache[symbol] = appState.cache[symbol] || {};
+            appState.cache[symbol][key] = { ts: Date.now(), data: payload };
+            saveState();
+        }
+
+        async function fetchKlines(symbol) {
+            const url = ENDPOINTS.klines(symbol, appState.timeframe, 100);
+            const data = await fetchWithRetry(url);
+            // Binance klines fields
+            // [0] open time, [1] open, [2] high, [3] low, [4] close, [5] volume, [6] close time
+            // Determine price precision from first 5 klines' OHLC strings (smallest significant decimals)
+            const sample = data.slice(0, 5);
+            const precisions = [];
+            for (const d of sample) {
+                for (const idx of [1, 2, 3, 4]) {
+                    const s = String(d[idx] ?? '');
+                    const dot = s.indexOf('.');
+                    if (dot >= 0) {
+                        const frac = s.slice(dot + 1);
+                        const trimmed = frac.replace(/0+$/g, '');
+                        precisions.push(trimmed.length);
+                    } else {
+                        precisions.push(0);
+                    }
+                }
+            }
+            let pricePrecision = 0;
+            if (precisions.length) {
+                pricePrecision = Math.max(...precisions);
+            }
+            const candles = data.map(d => ({
+                time: Math.floor(d[0] / 1000),
+                open: parseFloat(d[1]),
+                high: parseFloat(d[2]),
+                low: parseFloat(d[3]),
+                close: parseFloat(d[4])
+            }));
+            const volumes = data.map(d => ({ time: Math.floor(d[0] / 1000), value: parseFloat(d[5]) }));
+            return { candles, volumes, pricePrecision };
+        }
+
+        async function fetchOI(symbol) {
+            const url = ENDPOINTS.oi(symbol, appState.timeframe, 100);
+            const data = await fetchWithRetry(url);
+            // [{ openTime, sumOpenInterest, sumOpenInterestValue, ... }]
+            const series = data.map(d => ({
+                time: Math.floor(d.timestamp ? d.timestamp / 1000 : d.sumOpenInterest ? (d.time || d.openTime) / 1000 : d.openTime / 1000),
+                value: parseFloat(d.sumOpenInterest)
+            })).filter(p => Number.isFinite(p.value));
+            return series;
+        }
+
+        async function fetchFunding(symbol) {
+            const url = ENDPOINTS.funding(symbol, null, 100);
+            const data = await fetchWithRetry(url);
+            // [{ symbol, fundingRate, fundingTime }]
+            // fundingRate is a fraction (e.g., 0.0001 = 0.01%)
+            const series = data.map(d => ({
+                time: Math.floor(d.fundingTime / 1000),
+                value: Math.round(parseFloat(d.fundingRate) * 10000) / 100 // percent with 2 decimals
+            })).filter(p => Number.isFinite(p.value));
+            return series.slice(-100);
+        }
+
+        // ------------------------------
+        // Indicators
+        // ------------------------------
+        function computeSMA(values, length) {
+            const out = new Array(values.length).fill(null);
+            let sum = 0;
+            for (let i = 0; i < values.length; i++) {
+                sum += values[i];
+                if (i >= length) sum -= values[i - length];
+                if (i >= length - 1) out[i] = sum / length;
+            }
+            return out;
+        }
+
+        function computeStd(values, length, sma) {
+            const out = new Array(values.length).fill(null);
+            for (let i = 0; i < values.length; i++) {
+                if (i < length - 1 || sma[i] == null) continue;
+                let s = 0;
+                for (let j = i - length + 1; j <= i; j++) {
+                    const diff = values[j] - sma[i];
+                    s += diff * diff;
+                }
+                out[i] = Math.sqrt(s / length);
+            }
+            return out;
+        }
+
+        function computeBBWidth(closes, times, length = 20, k = 2) {
+            const sma = computeSMA(closes, length);
+            const std = computeStd(closes, length, sma);
+            const width = closes.map((_, i) => {
+                if (i < length - 1 || sma[i] == null || std[i] == null) return null;
+                const upper = sma[i] + k * std[i];
+                const lower = sma[i] - k * std[i];
+                const mid = sma[i];
+                const w = (upper - lower) / mid; // normalized width
+                return { time: times[i], value: +w.toFixed(6) };
+            }).filter(Boolean);
+            // last 80 points
+            return width.slice(-80);
+        }
+
+        // ------------------------------
+        // Charts (Lightweight Charts)
+        // ------------------------------
+        function createChart(container, options = {}) {
+            const isDark = document.documentElement.classList.contains('dark');
+            const chart = LightweightCharts.createChart(container, Object.assign({
+                layout: {
+                    background: { type: 'solid', color: isDark ? '#0f172a' : '#ffffff' },
+                    textColor: isDark ? '#e2e8f0' : '#334155'
+                },
+                grid: {
+                    vertLines: { color: 'rgba(128,128,128,0.1)' },
+                    horzLines: { color: 'rgba(128,128,128,0.1)' }
+                },
+                crosshair: { mode: 0 },
+                timeScale: { borderColor: 'rgba(128,128,128,0.25)', minBarSpacing: 0.2, timeVisible: true },
+                handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false, vertTouchDrag: false },
+                handleScale: { axisPressedMouseMove: false, mouseWheel: false, pinch: false },
+                rightPriceScale: { borderColor: 'rgba(128,128,128,0.25)', minimumWidth: 80 }
+            }, options));
+            return chart;
+        }
+
+        function attachTooltip(container, chart, series, formatValue = (v) => v) {
+            const tip = document.createElement('div');
+            tip.className = 'tooltip absolute top-2 left-2 z-10 rounded px-2 py-1 text-xs bg-black/60 text-white hidden';
+            container.style.position = 'relative';
+            container.appendChild(tip);
+            chart.subscribeCrosshairMove(param => {
+                if (!param || !param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
+                    tip.classList.add('hidden');
+                    return;
+                }
+                const hasSeriesData = param.seriesData && typeof param.seriesData.get === 'function';
+                const hasSeriesPrices = param.seriesPrices && typeof param.seriesPrices.get === 'function';
+                const data = hasSeriesData ? param.seriesData.get(series) : (hasSeriesPrices ? param.seriesPrices.get(series) : null);
+                if (data == null) { tip.classList.add('hidden'); return; }
+                let arg;
+                if (data && typeof data === 'object' && ('open' in data || 'close' in data || 'high' in data || 'low' in data)) {
+                    arg = data; // candlestick data object
+                } else if (typeof data === 'object' && 'value' in data) {
+                    arg = data.value; // line/histogram datapoint with value
+                } else {
+                    arg = data; // numeric
+                }
+                tip.textContent = String(formatValue(arg));
+                tip.classList.remove('hidden');
+            });
+        }
+
+        // ------------------------------
+        // UI Rendering
+        // ------------------------------
+        const cardsRoot = document.getElementById('cards');
+        const cardElements = new Map(); // symbol -> HTMLElement
+
+        function renderAllCards() {
+            const q = normalizeSymbol(document.getElementById('search-input').value);
+
+            // Ensure a card exists for every symbol in the watchlist
+            appState.watchlist.forEach((sym) => {
+                if (!cardElements.has(sym)) {
+                    const cardEl = createCoinCard(sym);
+                    cardElements.set(sym, cardEl);
+                    cardsRoot.appendChild(cardEl);
+                    requestAnimationFrame(() => lazyLoadCharts(sym, cardEl));
+                }
+            });
+
+            // Remove cards for symbols no longer in the watchlist
+            Array.from(cardElements.keys()).forEach((sym) => {
+                if (!appState.watchlist.includes(sym)) {
+                    destroySymbol(sym);
+                }
+            });
+
+            // Reorder DOM to match watchlist insertion order
+            updateDOMOrder();
+
+            // Apply filter by hiding/showing, no DOM teardown
+            cardElements.forEach((el, sym) => {
+                const match = !q || sym.includes(q);
+                el.classList.toggle('hidden', !match);
+            });
+        }
+
+        function destroySymbol(symbol) {
+            const el = cardElements.get(symbol);
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+            cardElements.delete(symbol);
+            const ctx = renderContext.get(symbol);
+            if (ctx) {
+                try { ctx.candleChart.remove(); } catch (e) { }
+                try { ctx.volChart.remove(); } catch (e) { }
+                try { ctx.bbChart.remove(); } catch (e) { }
+                try { ctx.oiChart.remove(); } catch (e) { }
+                renderContext.delete(symbol);
+            }
+        }
+
+        function updateDOMOrder() {
+            appState.watchlist.forEach((sym) => {
+                const el = cardElements.get(sym);
+                if (el) cardsRoot.appendChild(el);
+            });
+        }
+
+        function reorderWatchlist(sourceSym, targetSym, placeAfter = false) {
+            if (!sourceSym || !targetSym || sourceSym === targetSym) return;
+            const list = appState.watchlist.slice();
+            const srcIdx = list.indexOf(sourceSym);
+            const tgtIdx = list.indexOf(targetSym);
+            if (srcIdx === -1 || tgtIdx === -1) return;
+            // Remove source first
+            list.splice(srcIdx, 1);
+            // Adjust target index if source was before target (list shrank before target)
+            let adjustedTargetIdx = tgtIdx - (srcIdx < tgtIdx ? 1 : 0);
+            let insertIdx = adjustedTargetIdx + (placeAfter ? 1 : 0);
+            if (insertIdx < 0) insertIdx = 0;
+            if (insertIdx > list.length) insertIdx = list.length;
+            list.splice(insertIdx, 0, sourceSym);
+            appState.watchlist = list;
+            saveState();
+            updateDOMOrder();
+        }
+
+        function createCoinCard(symbol) {
+            const el = document.createElement('div');
+            el.className = 'w-[360px] sm:w-[420px] shrink-0 rounded border dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden';
+            el.setAttribute('draggable', 'true');
+            el.dataset.symbol = symbol;
+            el.tabIndex = 0;
+            el.setAttribute('draggable', 'true');
+            el.dataset.symbol = symbol;
+
+            el.innerHTML = `
+        <details class="group" open>
+          <summary class="flex items-center justify-between cursor-pointer select-none p-3 border-b dark:border-slate-800">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold">${symbol}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button data-action="refresh" class="text-xs px-2 py-1 rounded border dark:border-slate-700">새로고침</button>
+              <button data-action="remove" class="text-xs px-2 py-1 rounded bg-red-600 text-white">삭제</button>
+            </div>
+          </summary>
+          <div class="p-3 space-y-3">
+            <div class="grid gap-3 grid-cols-1">
+              <div>
+                <h3 class="text-sm mb-1 text-slate-500">가격 캔들 (<span class="tf-label">${appState.timeframe}</span>, 100)</h3>
+                <div class="chart" id="candle-${symbol}"></div>
+              </div>
+              <div>
+                <h3 class="text-sm mb-1 text-slate-500">볼륨 (100)</h3>
+                <div class="chart" id="vol-${symbol}"></div>
+              </div>
+              <div>
+                <h3 class="text-sm mb-1 text-slate-500">볼린저 밴드 폭 (20)</h3>
+                <div class="chart-sm" id="bb-${symbol}"></div>
+              </div>
+              <div>
+                <h3 class="text-sm mb-1 text-slate-500">미결제약정 (OI)</h3>
+                <div class="chart-sm" id="oi-${symbol}"></div>
+              </div>
+              <div>
+                <h3 class="text-sm mb-1 text-slate-500">펀딩비 (%)</h3>
+                <div class="chart-sm" id="funding-${symbol}"></div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <h3 class="text-sm text-slate-500">저널</h3>
+              <div class="flex gap-2">
+                <textarea id="note-input-${symbol}" rows="2" class="flex-1 px-3 py-2 rounded border dark:border-slate-700 bg-white dark:bg-slate-900" placeholder="메모..."></textarea>
+                <button data-action="add-note" class="px-3 py-2 rounded bg-indigo-600 text-white">추가</button>
+              </div>
+              <div id="notes-${symbol}" class="space-y-2"></div>
+            </div>
+          </div>
+        </details>
+      `;
+
+            const details = el.querySelector('details');
+            const summary = el.querySelector('summary');
+            if (summary) {
+                summary.addEventListener('click', (e) => {
+                    e.preventDefault();
+                });
+            }
+
+            el.querySelector('[data-action="remove"]').addEventListener('click', () => removeSymbol(symbol));
+            el.querySelector('[data-action="refresh"]').addEventListener('click', () => refreshSymbol(symbol, true));
+            el.querySelector('[data-action="add-note"]').addEventListener('click', () => addNote(symbol));
+
+            // Note textarea: ignore drag and submit on Ctrl/Cmd+Enter
+            const noteTextarea = el.querySelector(`#note-input-${symbol}`);
+            if (noteTextarea) {
+                try { noteTextarea.setAttribute('draggable', 'false'); } catch (_) { }
+                noteTextarea.addEventListener('dragstart', (e) => { e.stopPropagation(); });
+                noteTextarea.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        addNote(symbol);
+                    }
+                });
+            }
+
+            // Drag & Drop reordering (ignore inputs/buttons/textareas)
+            el.addEventListener('dragstart', (e) => {
+                if (e.target && e.target.closest('textarea, input, button')) { e.preventDefault(); return; }
+                e.dataTransfer.effectAllowed = 'move';
+                try { e.dataTransfer.setData('text/plain', symbol); } catch (_) { }
+                el.classList.add('opacity-60');
+            });
+            el.addEventListener('dragend', () => {
+                el.classList.remove('opacity-60');
+            });
+            el.addEventListener('dragover', (e) => {
+                if (e.target && e.target.closest('textarea, input, button')) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+            el.addEventListener('drop', (e) => {
+                if (e.target && e.target.closest('textarea, input, button')) return;
+                e.preventDefault();
+                const src = e.dataTransfer.getData('text/plain');
+                const dst = symbol;
+                if (!src || src === dst) return;
+                const list = appState.watchlist;
+                const srcIdx = list.indexOf(src);
+                const dstIdx = list.indexOf(dst);
+                if (srcIdx === -1 || dstIdx === -1) return;
+                const placeAfter = srcIdx < dstIdx; // dropping ON a card swaps positions
+                reorderWatchlist(src, dst, placeAfter);
+            });
+
+            // Drag & Drop reordering
+            el.addEventListener('dragstart', (e) => {
+                e.dataTransfer.effectAllowed = 'move';
+                try { e.dataTransfer.setData('text/plain', symbol); } catch (_) { }
+                el.classList.add('opacity-60');
+            });
+            el.addEventListener('dragend', () => {
+                el.classList.remove('opacity-60');
+            });
+            el.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+            el.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const src = e.dataTransfer.getData('text/plain');
+                const dst = symbol;
+                if (!src) return;
+                reorderWatchlist(src, dst);
+            });
+
+            renderNotes(symbol, el);
+            return el;
+        }
+
+        function renderNotes(symbol, rootEl) {
+            const wrap = rootEl.querySelector(`#notes-${symbol}`);
+            const entries = (appState.notes[symbol] || []).slice().reverse();
+            wrap.innerHTML = '';
+            if (!entries.length) {
+                const empty = document.createElement('div');
+                empty.className = 'text-xs text-slate-500';
+                empty.textContent = '메모가 없습니다.';
+                wrap.appendChild(empty);
+                return;
+            }
+            entries.forEach(n => {
+                const item = document.createElement('div');
+                item.className = 'text-sm px-3 py-2 rounded border dark:border-slate-800';
+                const ts = new Date(n.ts).toLocaleString();
+                item.innerHTML = `
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <div class="text-xs text-slate-500 mb-1">${ts}</div>
+              <div class="break-words">${escapeHtml(n.text)}</div>
+            </div>
+            <button data-action="del-note" data-ts="${n.ts}" class="self-start text-xs px-2 py-1 rounded border dark:border-slate-700 hover:bg-red-50 dark:hover:bg-slate-800">삭제</button>
+          </div>
+        `;
+                const btn = item.querySelector('[data-action="del-note"]');
+                btn.addEventListener('click', () => deleteNote(symbol, n.ts));
+                wrap.appendChild(item);
+            });
+        }
+
+        function deleteNote(symbol, ts) {
+            const notes = appState.notes[symbol] || [];
+            const next = notes.filter(n => n.ts !== ts);
+            appState.notes[symbol] = next;
+            saveState();
+            const card = [...cardsRoot.children].find(c => c.querySelector('summary .font-semibold')?.textContent === symbol);
+            if (card) renderNotes(symbol, card);
+            showToast('메모가 삭제되었습니다', 'success');
+        }
+
+        function addNote(symbol) {
+            const input = document.getElementById(`note-input-${symbol}`);
+            const text = (input.value || '').trim();
+            if (!text) { showToast('메모를 입력하세요', 'error'); return; }
+            appState.notes[symbol] = appState.notes[symbol] || [];
+            appState.notes[symbol].push({ ts: Date.now(), text });
+            input.value = '';
+            saveState();
+            // rerender notes
+            const card = [...cardsRoot.children].find(c => c.querySelector('summary .font-semibold')?.textContent === symbol);
+            if (card) renderNotes(symbol, card);
+            showToast('메모가 저장되었습니다', 'success');
+        }
+
+        function escapeHtml(s) {
+            return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        }
+
+        // ------------------------------
+        // Symbol management
+        // ------------------------------
+        function addSymbol(symInput) {
+            const sym = normalizeSymbol(symInput || document.getElementById('symbol-input').value);
+            if (!sym) { showToast('심볼을 입력하세요', 'error'); return; }
+            if (!isValidSymbol(sym)) { showToast('유효한 심볼 형식이 아닙니다 (예: BTCUSDT)', 'error'); return; }
+            if (appState.watchlist.includes(sym)) { showToast('이미 추가된 심볼입니다', 'error'); return; }
+            appState.watchlist.push(sym);
+            saveState();
+            renderAllCards();
+            showToast(`${sym} 추가됨`, 'success');
+        }
+
+        function removeSymbol(sym) {
+            appState.watchlist = appState.watchlist.filter(s => s !== sym);
+            saveState();
+            renderAllCards();
+            showToast(`${sym} 삭제됨`, 'success');
+        }
+
+        // ------------------------------
+        // Lazy load & Refresh
+        // ------------------------------
+        const renderContext = new Map(); // symbol -> { charts, mounted }
+
+        async function lazyLoadCharts(symbol, cardEl) {
+            try {
+                // Serve cached data instantly
+                const kKey = 'klines_' + appState.timeframe;
+                const oiKey = 'oi_' + appState.timeframe;
+                const cachedK = getCache(symbol, kKey);
+                const cachedOI = getCache(symbol, oiKey);
+                const cachedFunding = getCache(symbol, 'funding');
+                if (cachedK) mountOrUpdateCharts(symbol, cardEl, cachedK.data, cachedOI?.data || [], cachedFunding?.data || []);
+                // Background refresh
+                await refreshSymbol(symbol, false, cardEl);
+            } catch (e) {
+                showToast(`${symbol} 로드 오류: ${e.message}`, 'error');
+            }
+        }
+
+        const inflight = new Map(); // symbol -> promise
+        const lastFetched = new Map();
+
+        async function refreshSymbol(symbol, force = false, cardElOverride = null) {
+            if (inflight.has(symbol)) return inflight.get(symbol);
+            const now = Date.now();
+            const last = lastFetched.get(symbol) || 0;
+            if (!force && now - last < 15_000) return; // simple debounce per symbol
+            lastFetched.set(symbol, now);
+
+            const p = (async () => {
+                const [kData, oiData, fundingData] = await Promise.all([
+                    (async () => {
+                        const kKey = 'klines_' + appState.timeframe;
+                        const cached = getCache(symbol, kKey);
+                        if (!force && cached && now - cached.ts < CACHE_TTL_MS) return cached.data;
+                        const fresh = await fetchKlines(symbol);
+                        setCache(symbol, kKey, fresh);
+                        return fresh;
+                    })(),
+                    (async () => {
+                        const oiKey = 'oi_' + appState.timeframe;
+                        const cached = getCache(symbol, oiKey);
+                        if (!force && cached && now - cached.ts < CACHE_TTL_MS) return cached.data;
+                        const fresh = await fetchOI(symbol);
+                        setCache(symbol, oiKey, fresh);
+                        return fresh;
+                    })(),
+                    (async () => {
+                        const cached = getCache(symbol, 'funding');
+                        if (!force && cached && now - cached.ts < CACHE_TTL_MS) return cached.data;
+                        const fresh = await fetchFunding(symbol);
+                        setCache(symbol, 'funding', fresh);
+                        return fresh;
+                    })()
+                ]);
+                const cardEl = cardElOverride || [...cardsRoot.children].find(c => c.querySelector('summary .font-semibold')?.textContent === symbol);
+                if (cardEl) mountOrUpdateCharts(symbol, cardEl, kData, oiData, fundingData);
+            })().catch(e => {
+                showToast(`${symbol} 갱신 실패: ${e.message}`, 'error');
+            }).finally(() => inflight.delete(symbol));
+
+            inflight.set(symbol, p);
+            return p;
+        }
+
+        function computeOICandles(oiSeries) {
+            if (!oiSeries || oiSeries.length === 0) return [];
+            const out = [];
+            let prev = oiSeries[0].value;
+            for (let i = 1; i < oiSeries.length; i++) {
+                const cur = oiSeries[i].value;
+                const time = oiSeries[i].time;
+                const open = prev;
+                const close = cur;
+                const high = Math.max(open, close);
+                const low = Math.min(open, close);
+                out.push({ time, open, high, low, close });
+                prev = cur;
+            }
+            return out;
+        }
+
+        function mountOrUpdateCharts(symbol, cardEl, kData, oiData, fundingData) {
+            const times = kData.candles.map(c => c.time);
+            const closes = kData.candles.map(c => c.close);
+            const bb = computeBBWidth(closes, times);
+            const oiCandles = computeOICandles(oiData);
+
+            let ctx = renderContext.get(symbol);
+            if (!ctx) {
+                // Mount charts
+                const candleEl = cardEl.querySelector(`#candle-${symbol}`);
+                const volEl = cardEl.querySelector(`#vol-${symbol}`);
+                const bbEl = cardEl.querySelector(`#bb-${symbol}`);
+                const oiEl = cardEl.querySelector(`#oi-${symbol}`);
+                const fundingEl = cardEl.querySelector(`#funding-${symbol}`);
+
+                const candleChart = createChart(candleEl, { height: candleEl.clientHeight });
+                const pp = Math.min(Math.max(kData.pricePrecision ?? 0, 0), 8);
+                const mm = pp > 0 ? Math.pow(10, -pp) : 1;
+                const candleSeries = candleChart.addCandlestickSeries({ priceFormat: { type: 'price', precision: pp, minMove: mm } });
+                candleSeries.setData(kData.candles);
+                candleChart.timeScale().fitContent();
+
+                const formatter = (price) => {
+                    if (Math.abs(price) >= 1_000_000_000) {
+                        return Math.round(price / 1_000_000_000) + 'B';
+                    } else if (Math.abs(price) >= 1_000_000) {
+                        return Math.round(price / 1_000_000) + 'M';
+                    } else if (Math.abs(price) >= 1_000) {
+                        return Math.round(price / 1_000) + 'K';
+                    }
+                    return String(Math.round(price));
+                }
+
+                const volChart = createChart(volEl, { height: volEl.clientHeight });
+                const volSeries = volChart.addHistogramSeries({ color: '#22c55e', priceFormat: { type: 'custom', formatter: formatLargeNumber } });
+                volSeries.setData(kData.volumes);
+                volChart.timeScale().fitContent();
+
+                const bbChart = createChart(bbEl, { height: bbEl.clientHeight });
+                const bbSeries = bbChart.addLineSeries({ color: '#f59e0b', lineWidth: 2 });
+                bbSeries.setData(bb);
+                bbChart.timeScale().fitContent();
+
+                const oiChart = createChart(oiEl, { height: oiEl.clientHeight });
+                const oiSeries = oiChart.addCandlestickSeries({ priceFormat: { type: 'custom', formatter: formatLargeNumber } });
+                oiSeries.setData(oiCandles);
+                oiChart.timeScale().fitContent();
+
+                const fundingChart = createChart(fundingEl, { height: fundingEl.clientHeight });
+                const fundingSeries = fundingChart.addLineSeries({ color: '#3b82f6', lineWidth: 2, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } });
+                fundingSeries.setData(fundingData.map(p => ({ time: p.time, value: p.value })));
+                fundingChart.timeScale().fitContent();
+
+                const prec = Math.min(Math.max(kData.pricePrecision ?? 0, 0), 8);
+                const pf = (n) => Number(n).toFixed(prec);
+                attachTooltip(candleEl, candleChart, candleSeries, (p) => `O:${pf(p.open)} H:${pf(p.high)} L:${pf(p.low)} C:${pf(p.close)}`);
+                attachTooltip(volEl, volChart, volSeries, (v) => `Vol:${formatLargeNumber(v)}`);
+                attachTooltip(bbEl, bbChart, bbSeries, (v) => `BB Width:${v}`);
+                attachTooltip(oiEl, oiChart, oiSeries, (p) => `O:${formatLargeNumber(p.open)} H:${formatLargeNumber(p.high)} L:${formatLargeNumber(p.low)} C:${formatLargeNumber(p.close)}`);
+                attachTooltip(fundingEl, fundingChart, fundingSeries, (v) => `Funding: ${Number(v).toFixed(2)}%`);
+
+                ctx = { candleChart, candleSeries, volChart, volSeries, bbChart, bbSeries, oiChart, oiSeries, fundingChart, fundingSeries };
+                renderContext.set(symbol, ctx);
+            } else {
+                // Update precision if changed
+                const newPrec = Math.min(Math.max(kData.pricePrecision ?? 0, 0), 8);
+                const newMinMove = newPrec > 0 ? Math.pow(10, -newPrec) : 1;
+                ctx.candleSeries.applyOptions({ priceFormat: { type: 'price', precision: newPrec, minMove: newMinMove } });
+                ctx.candleSeries.setData(kData.candles);
+                ctx.volSeries.setData(kData.volumes);
+                ctx.bbSeries.setData(bb);
+                ctx.oiSeries.setData(oiCandles);
+                if (fundingData) ctx.fundingSeries.setData(fundingData.map(p => ({ time: p.time, value: p.value })));
+                ctx.candleChart.timeScale().fitContent();
+                ctx.volChart.timeScale().fitContent();
+                ctx.bbChart.timeScale().fitContent();
+                ctx.oiChart.timeScale().fitContent();
+                if (ctx.fundingChart) ctx.fundingChart.timeScale().fitContent();
+            }
+        }
+
+        // ------------------------------
+        // Auto-refresh 60s
+        // ------------------------------
+        setInterval(() => {
+            // Always refresh all symbols since all cards stay open
+            appState.watchlist.forEach(sym => refreshSymbol(sym));
+        }, 60_000);
+
+        // ------------------------------
+        // Events
+        // ------------------------------
+        document.getElementById('add-symbol').addEventListener('click', () => addSymbol());
+        document.getElementById('symbol-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') addSymbol();
+        });
+        document.getElementById('search-input').addEventListener('input', () => renderAllCards());
+        document.getElementById('export-state').addEventListener('click', async () => {
+            const json = getRawStateJSON();
+            const ok = await copyToClipboard(json);
+            if (ok) {
+                showToast('상태 JSON이 클립보드에 복사되었습니다', 'success');
+            } else {
+                showToast('클립보드 복사 실패. 수동으로 복사하세요.', 'error');
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = json;
+                    ta.className = 'fixed inset-4 w-[90vw] h-[60vh] z-[60] p-3 rounded border dark:border-slate-700 bg-white dark:bg-slate-900';
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                } catch (_) { }
+            }
+        });
+        {
+            const tfSelect = document.getElementById('tf-select');
+            if (tfSelect) {
+                try { tfSelect.value = appState.timeframe; } catch (_) { }
+                tfSelect.addEventListener('change', () => {
+                    appState.timeframe = tfSelect.value;
+                    saveState();
+                    // Update labels on all cards
+                    cardElements.forEach((el) => {
+                        const lbl = el.querySelector('.tf-label');
+                        if (lbl) lbl.textContent = appState.timeframe;
+                    });
+                    // Force refresh all symbols for new timeframe
+                    appState.watchlist.forEach(sym => refreshSymbol(sym, true));
+                    showToast(`타임프레임이 ${appState.timeframe} 으로 변경되었습니다`, 'success');
+                });
+            }
+        }
+        document.getElementById('import-state').addEventListener('click', () => showImportModal());
+        document.getElementById('import-cancel').addEventListener('click', () => hideImportModal());
+        document.getElementById('import-apply').addEventListener('click', () => {
+            const ta = document.getElementById('import-textarea');
+            const raw = ta.value || '';
+            try {
+                const parsed = JSON.parse(raw);
+                const next = validateImportedState(parsed);
+                appState = next;
+                saveState();
+                applyTheme(appState.theme);
+                // 기존 렌더 컨텍스트/카드 초기화 후 재렌더
+                Array.from(cardElements.keys()).forEach(sym => destroySymbol(sym));
+                cardElements.clear();
+                renderAllCards();
+                hideImportModal();
+                showToast('상태가 적용되었습니다', 'success');
+                location.reload();
+            } catch (e) {
+                showToast(`불러오기 실패: ${e.message || e}`, 'error');
+            }
+        });
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            appState.theme = appState.theme === 'dark' ? 'light' : appState.theme === 'light' ? 'auto' : 'dark';
+            saveState();
+            applyTheme(appState.theme);
+            // Resize charts to apply color change
+            renderContext.forEach((ctx) => {
+                ctx.candleChart.applyOptions({});
+                ctx.volChart.applyOptions({});
+                ctx.bbChart.applyOptions({});
+                ctx.oiChart.applyOptions({});
+            });
+        });
+
+        // Initial render
+        renderAllCards();
+        {
+            const el = document.getElementById("scrollArea");
+
+            el.addEventListener("wheel", (e) => {
+                e.preventDefault(); // 기본 스크롤 막음
+                // 반대로 적용
+                el.scrollLeft -= e.deltaY;
+                el.scrollTop -= e.deltaX;
+            }, { passive: false });
+        }
+    </script>
+</body>
+
+</html>

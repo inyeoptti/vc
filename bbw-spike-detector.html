@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BBW 스파이크 모니터 - Binance Futures</title>
+    <style>
+      :root {
+        --bg: #0b0e11;
+        --panel: #12161c;
+        --muted: #6b7280;
+        --text: #e5e7eb;
+        --accent: #10b981;
+        --down: #ef4444;
+        --up: #22c55e;
+        --warn: #f59e0b;
+        --chip: #1f2937;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+      header {
+        padding: 12px 16px;
+        background: var(--panel);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid #1f2937;
+        width: 100%;
+      }
+      .title {
+        font-weight: 700;
+        font-size: 16px;
+      }
+      .controls {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      .chip {
+        background: var(--chip);
+        color: var(--text);
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+      }
+      main {
+        padding: 12px 16px 80px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      thead th {
+        text-align: left;
+        padding: 8px;
+        font-size: 12px;
+        color: var(--muted);
+        border-bottom: 1px solid #1f2937;
+        position: sticky;
+        top: 58px;
+        background: var(--panel);
+        z-index: 5;
+      }
+      tbody td {
+        padding: 8px;
+        border-bottom: 1px solid #1f2937;
+        vertical-align: middle;
+        font-size: 13px;
+      }
+      .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .symbol { font-weight: 600; letter-spacing: 0.3px; }
+      .muted { color: var(--muted); }
+      .up { color: var(--up); }
+      .down { color: var(--down); }
+      .warn { color: var(--warn); }
+      .status {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .status .label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .small { font-size: 12px; }
+      .right { text-align: right; }
+      .center { text-align: center; }
+      canvas.preview {
+        display: block;
+        background: #0f1318;
+        border-radius: 4px;
+      }
+      .sticky-footer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--panel);
+        border-top: 1px solid #1f2937;
+        padding: 8px 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+      }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="title">BBW 스파이크 모니터</div>
+      <div class="controls">
+        <span id="statusText" class="chip">초기화 중…</span>
+        <span id="symbolsCount" class="chip">심볼: -</span>
+        <span id="loadedCount" class="chip">초기 캔들: 0</span>
+        <span id="wsState" class="chip">WS: -</span>
+        <span class="chip">조건: prev BBW ≤ 0.02 && 현 봉 +1% 최초 돌파</span>
+      </div>
+    </header>
+    <main>
+      <table>
+        <thead>
+          <tr>
+            <th>티커</th>
+            <th>프리뷰</th>
+            <th class="right">거래량(USDT)</th>
+            <th class="right">볼륨 Z</th>
+            <th class="right">BBW 증가</th>
+            <th class="right">분봉 시작</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </main>
+    <div class="sticky-footer">
+      <div class="status">
+        <span class="label">진행상태:</span>
+        <span id="footerStatus">-</span>
+      </div>
+      <div class="status">
+        <span class="label">최근 탐지:</span>
+        <span id="recentDetections" class="muted">없음</span>
+      </div>
+    </div>
+
+    <script type="module">
+      const API_BASE = 'https://fapi.binance.com';
+      const WS_BASE = 'wss://fstream.binance.com/stream';
+      const INTERVAL = '1m';
+      const KLINE_LIMIT = 21; // 최소 21개 유지
+      const BB_LENGTH = 20;
+      const BB_K = 2;
+      const BBW_THRESHOLD = 0.02; // 2%
+      const SPIKE_PCT = 0.01; // +1%
+      const MAX_ROWS = 400;
+
+      const dom = {
+        statusText: document.getElementById('statusText'),
+        symbolsCount: document.getElementById('symbolsCount'),
+        loadedCount: document.getElementById('loadedCount'),
+        wsState: document.getElementById('wsState'),
+        resultsBody: document.getElementById('resultsBody'),
+        footerStatus: document.getElementById('footerStatus'),
+        recentDetections: document.getElementById('recentDetections'),
+      };
+
+      function setStatus(text) {
+        dom.statusText.textContent = text;
+        dom.footerStatus.textContent = text;
+      }
+
+      function fmtNumber(n, digits = 2) {
+        if (!isFinite(n)) return '-';
+        return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+      }
+
+      function fmtTimeMinute(ts) {
+        const d = new Date(ts);
+        const h = String(d.getHours()).padStart(2, '0');
+        const m = String(d.getMinutes()).padStart(2, '0');
+        return `${h}:${m}`;
+      }
+
+      function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+      // 수학 유틸
+      function mean(values) {
+        if (values.length === 0) return 0;
+        let sum = 0;
+        for (const v of values) sum += v;
+        return sum / values.length;
+      }
+      function stddev(values) {
+        if (values.length < 2) return 0;
+        const m = mean(values);
+        let acc = 0;
+        for (const v of values) acc += (v - m) * (v - m);
+        return Math.sqrt(acc / values.length);
+      }
+      function computeBBW(closes, k = BB_K) {
+        if (closes.length < BB_LENGTH) return 0;
+        const last20 = closes.slice(closes.length - BB_LENGTH);
+        const m = mean(last20);
+        const s = stddev(last20);
+        if (m === 0) return 0;
+        const upper = m + k * s;
+        const lower = m - k * s;
+        return (upper - lower) / m;
+      }
+      function computeZScore(samples, current) {
+        if (samples.length < 2) return 0;
+        const m = mean(samples);
+        const s = stddev(samples);
+        if (s === 0) return 0;
+        return (current - m) / s;
+      }
+
+      // 상태 저장소
+      const symbols = [];
+      const candlesBySymbol = new Map(); // symbol -> Array<Candle>
+      const reportedByCandle = new Map(); // key `${symbol}:${openTime}` -> true
+      let ws;
+
+      /** @typedef {{ openTime:number, open:number, high:number, low:number, close:number, volume:number, quoteVolume:number, closeTime:number, isClosed:boolean }} Candle */
+
+      async function fetchExchangeInfo() {
+        const url = `${API_BASE}/fapi/v1/exchangeInfo`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('exchangeInfo 실패');
+        const data = await res.json();
+        const usdtPerp = data.symbols.filter(s => (
+          s.quoteAsset === 'USDT' && s.contractType === 'PERPETUAL' && s.status === 'TRADING'
+        ));
+        const list = usdtPerp.map(s => s.symbol);
+        return list;
+      }
+
+      async function fetchKlines(symbol) {
+        const url = `${API_BASE}/fapi/v1/klines?symbol=${symbol}&interval=${INTERVAL}&limit=${KLINE_LIMIT}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`klines 실패: ${symbol}`);
+        const arr = await res.json();
+        /** @type {Candle[]} */
+        const candles = arr.map(row => ({
+          openTime: row[0],
+          open: Number(row[1]),
+          high: Number(row[2]),
+          low: Number(row[3]),
+          close: Number(row[4]),
+          volume: Number(row[5]),
+          closeTime: row[6],
+          quoteVolume: Number(row[7]),
+          isClosed: true,
+        }));
+        return candles;
+      }
+
+      async function loadInitialKlines(allSymbols) {
+        const concurrency = 6;
+        let loaded = 0;
+        async function worker(queue) {
+          while (queue.length) {
+            const sym = queue.shift();
+            try {
+              const candles = await fetchKlines(sym);
+              candlesBySymbol.set(sym, candles);
+            } catch (e) {
+              console.error('초기 klines 실패', sym, e);
+            } finally {
+              loaded++;
+              dom.loadedCount.textContent = `초기 캔들: ${loaded}`;
+            }
+            // 간단 백오프
+            // await sleep(80);
+          }
+        }
+        const queue = allSymbols.slice();
+        const workers = Array.from({ length: concurrency }, () => worker(queue));
+        await Promise.all(workers);
+      }
+
+      function openWebSocketAndSubscribe(allSymbols) {
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+          try { ws.close(); } catch {}
+        }
+        ws = new WebSocket(WS_BASE);
+        ws.addEventListener('open', () => {
+          dom.wsState.textContent = 'WS: 연결됨';
+          setStatus('웹소켓 구독 중…');
+          // 구독 파라미터를 분할 전송하여 서버/브라우저 제한 회피
+          const params = allSymbols.map(s => `${s.toLowerCase()}@kline_${INTERVAL}`);
+          const chunkSize = 200;
+          for (let i = 0; i < params.length; i += chunkSize) {
+            const chunk = params.slice(i, i + chunkSize);
+            const msg = { method: 'SUBSCRIBE', params: chunk, id: i / chunkSize + 1 };
+            ws.send(JSON.stringify(msg));
+          }
+          // 구독 메시지 전송 완료 → 모니터링 시작 상태로 전환
+          setStatus('모니터링 시작');
+        });
+        ws.addEventListener('close', () => {
+          dom.wsState.textContent = 'WS: 해제됨 (재시도)';
+          setStatus('연결 종료됨. 2초 후 재연결…');
+          setTimeout(() => openWebSocketAndSubscribe(allSymbols), 2000);
+        });
+        ws.addEventListener('error', (e) => {
+          dom.wsState.textContent = 'WS: 오류';
+          console.error('WS 오류', e);
+        });
+        ws.addEventListener('message', (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            // 단일 또는 스트림 래핑
+            const payload = data.data?.k ? data.data : (data.k ? data : null);
+            if (!payload) return;
+            const k = payload.k;
+            if (k.i !== INTERVAL) return;
+            const symbol = k.s;
+            const candles = candlesBySymbol.get(symbol);
+            if (!candles) return;
+
+            const openTime = k.t; // 현재 봉 시작
+            const current = {
+              openTime: k.t,
+              open: Number(k.o),
+              high: Number(k.h),
+              low: Number(k.l),
+              close: Number(k.c),
+              volume: Number(k.v),
+              quoteVolume: Number(k.q),
+              closeTime: k.T,
+              isClosed: k.x,
+            };
+
+            const last = candles[candles.length - 1];
+            if (!last || openTime > last.openTime) {
+              // 새 봉 시작 → 롤링 업데이트
+              candles.push(current);
+              while (candles.length > KLINE_LIMIT) candles.shift();
+            } else if (openTime === last.openTime) {
+              // 현재 진행중인 봉 갱신
+              candles[candles.length - 1] = current;
+            } else {
+              // 오래된 이벤트 무시
+              return;
+            }
+
+            onKlineUpdate(symbol, candles);
+          } catch (e) {
+            console.error('WS 메시지 처리 실패', e);
+          }
+        });
+      }
+
+      function onKlineUpdate(symbol, candles) {
+        if (candles.length < KLINE_LIMIT) return;
+        const prev = candles[candles.length - 2];
+        const curr = candles[candles.length - 1];
+        if (!prev || !curr) return;
+
+        const key = `${symbol}:${curr.openTime}`;
+        // 이전 봉의 BBW 계산 (마지막 20개의 종가: 앞 1개 제외)
+        const closesPrev = candles.slice(0, candles.length - 1).map(c => c.close);
+        const prevBBW = computeBBW(closesPrev);
+        if (prevBBW <= 0) return;
+
+        // 조건 4: 이전 봉 BBW <= 0.02
+        const prevBBWPass = prevBBW <= BBW_THRESHOLD;
+        if (!prevBBWPass) return;
+
+        // 현재 봉의 +1% 스파이크 최초 돌파 여부
+        const spike = (curr.high - curr.open) / curr.open >= SPIKE_PCT;
+        if (!spike) return;
+        if (reportedByCandle.get(key)) return; // 최초 1회만
+
+        // 현재 시점의 BBW 증가치 (현재 종가 포함하여 측정)
+        const closesWithCurr = candles.map(c => c.close);
+        const currBBW = computeBBW(closesWithCurr);
+        const bbwIncrease = currBBW - prevBBW;
+
+        // 볼륨 Z-스코어 (과거 20개 quoteVolume 기준)
+        const prevQuoteVolumes = candles.slice(0, candles.length - 1).slice(-BB_LENGTH).map(c => c.quoteVolume);
+        const volZ = computeZScore(prevQuoteVolumes, curr.quoteVolume);
+
+        renderDetectionRow({
+          symbol,
+          candles: candles.slice(-BB_LENGTH),
+          volumeUSDT: curr.quoteVolume,
+          volumeZ: volZ,
+          bbwIncrease,
+          minute: curr.openTime,
+        });
+        reportedByCandle.set(key, true);
+      }
+
+      function renderDetectionRow({ symbol, candles, volumeUSDT, volumeZ, bbwIncrease, minute }) {
+        const tr = document.createElement('tr');
+
+        const tdSymbol = document.createElement('td');
+        tdSymbol.innerHTML = `<span class="symbol">${symbol}</span>`;
+
+        const tdPreview = document.createElement('td');
+        const canvas = document.createElement('canvas');
+        canvas.width = 140; canvas.height = 40; canvas.className = 'preview';
+        tdPreview.appendChild(canvas);
+
+        const tdVol = document.createElement('td');
+        tdVol.className = 'right mono';
+        tdVol.textContent = fmtNumber(volumeUSDT, 0);
+
+        const tdZ = document.createElement('td');
+        tdZ.className = 'right mono';
+        tdZ.textContent = volumeZ.toFixed(2);
+        if (volumeZ >= 2) tdZ.classList.add('up');
+        else if (volumeZ <= -2) tdZ.classList.add('down');
+
+        const tdBBW = document.createElement('td');
+        tdBBW.className = 'right mono';
+        const sign = bbwIncrease >= 0 ? '+' : '';
+        tdBBW.textContent = `${sign}${(bbwIncrease * 100).toFixed(2)}%`;
+        if (bbwIncrease > 0) tdBBW.classList.add('warn');
+
+        const tdTime = document.createElement('td');
+        tdTime.className = 'right mono muted';
+        tdTime.textContent = fmtTimeMinute(minute);
+
+        tr.appendChild(tdSymbol);
+        tr.appendChild(tdPreview);
+        tr.appendChild(tdVol);
+        tr.appendChild(tdZ);
+        tr.appendChild(tdBBW);
+        tr.appendChild(tdTime);
+
+        const tbody = dom.resultsBody;
+        tbody.insertBefore(tr, tbody.firstChild);
+        while (tbody.children.length > MAX_ROWS) tbody.removeChild(tbody.lastChild);
+
+        drawMiniCandles(canvas, candles);
+
+        // 최근 탐지 텍스트 업데이트
+        dom.recentDetections.textContent = `${symbol} ${fmtTimeMinute(minute)} (Z ${volumeZ.toFixed(2)})`;
+      }
+
+      function drawMiniCandles(canvas, candles) {
+        if (!canvas || candles.length === 0) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width, h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        const highs = candles.map(c => c.high);
+        const lows = candles.map(c => c.low);
+        const maxH = Math.max(...highs);
+        const minL = Math.min(...lows);
+        const range = Math.max(1e-9, maxH - minL);
+
+        const n = candles.length;
+        const gap = Math.max(1, Math.floor(w / (n + 1)));
+        const body = Math.max(1, Math.floor(gap * 0.5));
+
+        for (let i = 0; i < n; i++) {
+          const c = candles[i];
+          const x = Math.floor((i + 1) * gap);
+          const yHigh = Math.floor(h - (c.high - minL) / range * h);
+          const yLow = Math.floor(h - (c.low - minL) / range * h);
+          const yOpen = Math.floor(h - (c.open - minL) / range * h);
+          const yClose = Math.floor(h - (c.close - minL) / range * h);
+
+          // 꼬리
+          ctx.strokeStyle = '#64748b';
+          ctx.beginPath();
+          ctx.moveTo(x, yHigh);
+          ctx.lineTo(x, yLow);
+          ctx.stroke();
+
+          // 몸통
+          const isUp = c.close >= c.open;
+          ctx.fillStyle = isUp ? '#22c55e' : '#ef4444';
+          const yTop = Math.min(yOpen, yClose);
+          const height = Math.max(1, Math.abs(yClose - yOpen));
+          ctx.fillRect(x - Math.floor(body / 2), yTop, body, height);
+        }
+      }
+
+      async function main() {
+        try {
+          setStatus('심볼 로딩…');
+          const list = await fetchExchangeInfo();
+          symbols.push(...list);
+          dom.symbolsCount.textContent = `심볼: ${symbols.length}`;
+          setStatus('초기 캔들 로딩…');
+          await loadInitialKlines(symbols);
+          setStatus('웹소켓 연결…');
+          openWebSocketAndSubscribe(symbols);
+          setStatus('모니터링 시작');
+        } catch (e) {
+          console.error(e);
+          setStatus('오류 발생. 콘솔을 확인하세요.');
+        }
+      }
+
+      main();
+    </script>
+  </body>
+</html>
+
+

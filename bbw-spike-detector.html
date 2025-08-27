@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ko">
   <head>
@@ -45,7 +46,6 @@
         position: sticky;
         top: 0;
         z-index: 10;
-        width: 100%;
         padding: 12px 16px;
         background: var(--glass-bg);
         -webkit-backdrop-filter: blur(var(--blur));
@@ -345,6 +345,7 @@
       const symbols = [];
       const candlesBySymbol = new Map(); // symbol -> Array<Candle>
       const reportedByCandle = new Map(); // key `${symbol}:${openTime}` -> true
+      const activeAlerts = new Map(); // symbol -> { startTime, timer, row }
       let ws;
 
       /** @typedef {{ openTime:number, open:number, high:number, low:number, close:number, volume:number, quoteVolume:number, closeTime:number, isClosed:boolean }} Candle */
@@ -521,6 +522,99 @@
           playDing();
         }
         reportedByCandle.set(key, true);
+
+        // 3분간 실시간 프리뷰 활성화
+        startRealTimePreview(symbol, candles);
+      }
+
+      function startRealTimePreview(symbol, candles) {
+        // 기존 타이머가 있다면 제거
+        const existing = activeAlerts.get(symbol);
+        if (existing) {
+          clearInterval(existing.timer);
+        }
+
+        const startTime = Date.now();
+        const duration = 3 * 60 * 1000; // 3분
+        const alertCandle = candles[candles.length - 1]; // 알림이 발생한 봉
+        const alertCandles = candles.slice(-BB_LENGTH); // 알림 발생 시점의 캔들 데이터
+
+        // 실시간 업데이트 타이머 설정
+        const timer = setInterval(() => {
+          const elapsed = Date.now() - startTime;
+          if (elapsed >= duration) {
+            // 3분 경과 시 타이머 제거
+            clearInterval(timer);
+            activeAlerts.delete(symbol);
+            return;
+          }
+
+          // 현재 캔들 데이터로 프리뷰 업데이트
+          const currentCandles = candlesBySymbol.get(symbol);
+          if (currentCandles) {
+            updateRealTimePreview(symbol, currentCandles, alertCandle, alertCandles);
+          }
+        }, 1000); // 1초마다 업데이트
+
+        activeAlerts.set(symbol, { startTime, timer, row: null, alertCandle, alertCandles });
+      }
+
+      function updateRealTimePreview(symbol, candles, alertCandle, alertCandles) {
+        const alert = activeAlerts.get(symbol);
+        if (!alert) return;
+
+        // 해당 심볼의 테이블 행 찾기
+        const rows = dom.resultsBody.querySelectorAll('tr');
+        let targetRow = null;
+        for (const row of rows) {
+          const symbolCell = row.querySelector('td:first-child .symbol');
+          if (symbolCell && symbolCell.textContent === symbol) {
+            targetRow = row;
+            break;
+          }
+        }
+
+        if (targetRow) {
+          // 프리뷰 캔버스는 항상 실시간 업데이트
+          const canvas = targetRow.querySelector('canvas.preview');
+          if (canvas) {
+            drawMiniCandles(canvas, candles.slice(-BB_LENGTH));
+          }
+
+          // 거래량, Z-스코어, BBW 증가치는 알림 발생 봉의 값으로 고정
+          if (alertCandle) {
+            // 거래량 - 알림 발생 봉의 값으로 고정
+            const volCell = targetRow.querySelector('td:nth-child(3)');
+            if (volCell) {
+              volCell.textContent = fmtNumber(alertCandle.quoteVolume, 0);
+            }
+
+            // 볼륨 Z-스코어 - 알림 발생 시점의 값으로 고정
+            const prevQuoteVolumes = alertCandles.slice(0, alertCandles.length - 1).map(c => c.quoteVolume);
+            const volZ = computeZScore(prevQuoteVolumes, alertCandle.quoteVolume);
+            const zCell = targetRow.querySelector('td:nth-child(4)');
+            if (zCell) {
+              zCell.textContent = volZ.toFixed(2);
+              zCell.className = 'right mono';
+              if (volZ >= 2) zCell.classList.add('up');
+              else if (volZ <= -2) zCell.classList.add('down');
+            }
+
+            // BBW 증가치 - 알림 발생 시점의 값으로 고정
+            const closesPrev = alertCandles.slice(0, alertCandles.length - 1).map(c => c.close);
+            const prevBBW = computeBBW(closesPrev);
+            const closesWithCurr = alertCandles.map(c => c.close);
+            const currBBW = computeBBW(closesWithCurr);
+            const bbwIncrease = currBBW - prevBBW;
+            const bbwCell = targetRow.querySelector('td:nth-child(5)');
+            if (bbwCell) {
+              const sign = bbwIncrease >= 0 ? '+' : '';
+              bbwCell.textContent = `${sign}${(bbwIncrease * 100).toFixed(2)}%`;
+              bbwCell.className = 'right mono';
+              if (bbwIncrease > 0) bbwCell.classList.add('warn');
+            }
+          }
+        }
       }
 
       function renderDetectionRow({ symbol, candles, volumeUSDT, volumeZ, bbwIncrease, minute }) {

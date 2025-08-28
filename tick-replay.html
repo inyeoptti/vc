@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Binance Futures USDT Perp Tick Replay</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #151a21;
+      --text: #e6edf3;
+      --muted: #9aa4b2;
+      --accent: #2ea043;
+      --danger: #f85149;
+      --brand: #1f6feb;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    header {
+      padding: 14px 16px;
+      border-bottom: 1px solid #232b36;
+      background: linear-gradient(180deg, #0f1320 0%, #0e1116 100%);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(160px, 1fr));
+      gap: 10px;
+      padding: 12px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid #232b36;
+    }
+    .control {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label { font-size: 12px; color: var(--muted); }
+    select, input[type="date"], button {
+      background: #0e1116;
+      color: var(--text);
+      border: 1px solid #313944;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 14px;
+      outline: none;
+    }
+    button.primary { background: #15325b; border-color: #275ca8; }
+    button.primary:hover { background: #1b3c6c; }
+    button.play { background: #12301e; border-color: #256c3a; }
+    button.play:hover { background: #17402a; }
+    button.pause { background: #3b2020; border-color: #7e2f2f; }
+    button.pause:hover { background: #4a2626; }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .status {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 16px;
+      color: var(--muted);
+      font-size: 12px;
+      border-bottom: 1px solid #232b36;
+      background: #0f131a;
+    }
+    .status .dot { width: 8px; height: 8px; border-radius: 999px; background: #4d5562; }
+    .status .dot.ok { background: var(--accent); }
+    .status .dot.warn { background: #b38f00; }
+    .status .dot.err { background: var(--danger); }
+    #chart { height: calc(100vh - 210px); min-height: 420px; }
+    .footer {
+      padding: 10px 16px; color: var(--muted); font-size: 12px; border-top: 1px solid #232b36;
+    }
+    a { color: var(--brand); text-decoration: none; }
+  </style>
+  <script src="https://unpkg.com/lightweight-charts@5.0.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-1DQYSZQPZ0"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-1DQYSZQPZ0');
+</script>
+</head>
+<body>
+  <header>
+    <h1>바이낸스 선물 틱 리플레이</h1>
+  </header>
+
+  <div class="controls">
+    <div class="control">
+      <label for="symbol">심볼</label>
+      <select id="symbol"></select>
+    </div>
+    <div class="control">
+      <label for="start">시작시간 (UTC)</label>
+      <input id="start" type="datetime-local" />
+      <div id="start-local" class="local-time" style="font-size: 11px; color: #888; margin-top: 2px;"></div>
+    </div>
+    <div class="control">
+      <label for="end">종료시간 (UTC)</label>
+      <input id="end" type="datetime-local" />
+      <div id="end-local" class="local-time" style="font-size: 11px; color: #888; margin-top: 2px;"></div>
+    </div>
+    <div class="control">
+      <label>&nbsp;</label>
+      <div class="row">
+        <button id="load" class="primary">불러오기</button>
+      </div>
+    </div>
+    <div class="control">
+      <label for="speed">속도</label>
+      <select id="speed">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+        <option value="5">5x</option>
+        <option value="10">10x</option>
+      </select>
+    </div>
+    <div class="control">
+      <label>&nbsp;</label>
+      <div class="row">
+        <button id="play" class="play">재생</button>
+        <button id="pause" class="pause">정지</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status">
+    <div id="status-dot" class="dot"></div>
+    <div id="status-text">준비</div>
+    <div id="progress"></div>
+  </div>
+
+  <div id="chart"></div>
+
+      <div class="footer">
+      버그 신고 및 문의: <a href="https://open.kakao.com/o/slYUF3Oh">카카오톡 오픈채팅</a>
+    </div>
+
+  <script>
+    const apiBase = 'https://fapi.binance.com';
+    const s3Base = 'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision';
+
+    const ui = {
+      symbol: document.getElementById('symbol'),
+      start: document.getElementById('start'),
+      end: document.getElementById('end'),
+      startLocal: document.getElementById('start-local'),
+      endLocal: document.getElementById('end-local'),
+      load: document.getElementById('load'),
+      play: document.getElementById('play'),
+      pause: document.getElementById('pause'),
+      speed: document.getElementById('speed'),
+      dot: document.getElementById('status-dot'),
+      status: document.getElementById('status-text'),
+      progress: document.getElementById('progress'),
+      chart: document.getElementById('chart')
+    };
+
+    function setStatus(text, level = 'ok') {
+      ui.status.textContent = text;
+      ui.dot.className = 'dot ' + (level || 'ok');
+    }
+
+    function setProgress(text) {
+      ui.progress.textContent = text || '';
+    }
+
+    function ymd(date) {
+      const y = date.getUTCFullYear();
+      const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(date.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function parseDateTimeInputToUtcMs(inputEl) {
+      if (!inputEl.value) return null;
+      // datetime-local already includes time, just add Z for UTC
+      return new Date(inputEl.value + 'Z').getTime();
+    }
+
+    function addMinutes(dateTimeStr, minutes) {
+      const date = new Date(dateTimeStr + 'Z');
+      date.setUTCMinutes(date.getUTCMinutes() + minutes);
+      // Format back to datetime-local format (YYYY-MM-DDTHH:mm)
+      return date.toISOString().slice(0, 16);
+    }
+
+    function updateLocalTimeDisplay(inputEl, displayEl) {
+      if (!inputEl.value) {
+        displayEl.textContent = '';
+        return;
+      }
+      try {
+        const utcDate = new Date(inputEl.value + 'Z');
+        // Local timezone string
+        const localStr = new Date(utcDate).toLocaleString('ko-KR', {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', hour12: false
+        });
+        displayEl.textContent = `${localStr}`;
+        displayEl.style.color = '#888';
+      } catch (e) {
+        displayEl.textContent = '시간 형식 오류';
+        displayEl.style.color = '#f85149';
+      }
+    }
+
+    function daysBetweenInclusive(startMs, endMs) {
+      const days = [];
+      const oneDay = 24 * 60 * 60 * 1000;
+      let cur = new Date(startMs);
+      cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate()));
+      const end = new Date(endMs);
+      const endUtc = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+      while (cur.getTime() <= endUtc.getTime()) {
+        days.push(ymd(cur));
+        cur = new Date(cur.getTime() + oneDay);
+      }
+      return days;
+    }
+
+    function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+    async function enforceRateLimitIfNeeded(res) {
+      const usedWeight = res.headers.get('x-mbx-used-weight-1m');
+      if (!usedWeight) return;
+      const used = parseInt(usedWeight, 10);
+      if (!Number.isFinite(used)) return;
+      if (used >= 5950) {
+        const now = Date.now();
+        const msToNextMinute = 60000 - (now % 60000) + 50; // small buffer
+        setStatus(`API 제한 대기중... ${Math.ceil(msToNextMinute/1000)}초` , 'warn');
+        await sleep(msToNextMinute);
+      }
+    }
+
+    async function fetchUSDTPerpSymbols() {
+      setStatus('심볼 불러오는 중...');
+      const res = await fetch(`${apiBase}/fapi/v1/exchangeInfo`);
+      if (!res.ok) throw new Error(`exchangeInfo failed: ${res.status}`);
+      const data = await res.json();
+      const list = (data.symbols || [])
+        .filter(s => s.contractType === 'PERPETUAL' && s.status === 'TRADING')
+        .map(s => s.symbol)
+        .sort((a, b) => a.onboardDate - b.onboardDate);
+      ui.symbol.innerHTML = '';
+      for (const sym of list) {
+        const opt = document.createElement('option');
+        opt.value = sym; opt.textContent = sym; ui.symbol.appendChild(opt);
+      }
+      setStatus('심볼 준비됨');
+      return list;
+    }
+
+    function csvToTrades(csvText) {
+      const lines = csvText.split(/\r?\n/).filter(Boolean);
+      if (lines.length === 0) return [];
+      const trades = [];
+      for (let i = 0; i < lines.length; i++) {
+        const parts = lines[i].split(',');
+        // Detect header by checking first field is not a number
+        if (i === 0 && (isNaN(Number(parts[0])) || parts[0].trim() === 'agg_trade_id')) {
+          continue;
+        }
+        const id = Number(parts[0]);
+        const price = Number(parts[1]);
+        const qty = Number(parts[2]);
+        const time = Number(parts[5]);
+        if (Number.isFinite(time) && Number.isFinite(price) && Number.isFinite(qty)) {
+          trades.push({ id, price, quantity: qty, time });
+        }
+      }
+      return trades;
+    }
+
+    async function s3LoadAggTradesForDay(symbol, yyyyMmDd) {
+      const url = `${s3Base}/data/futures/um/daily/aggTrades/${symbol}/${symbol}-aggTrades-${yyyyMmDd}.zip`;
+      const res = await fetch(url, { mode: 'cors' });
+      if (res.status === 404) return { trades: [], ok: false, source: 's3-404' };
+      if (!res.ok) throw new Error(`S3 fetch failed ${res.status}: ${url}`);
+      const blob = await res.blob();
+      const zip = await JSZip.loadAsync(blob);
+      const csvFile = Object.values(zip.files).find(f => f.name.endsWith('.csv'));
+      if (!csvFile) throw new Error('CSV not found in ZIP');
+      const csvText = await csvFile.async('string');
+      const trades = csvToTrades(csvText);
+      return { trades, ok: true, source: 's3' };
+    }
+
+    async function restLoadAggTrades(symbol, startMs, endMs) {
+      const all = [];
+      const maxWindow = 60 * 60 * 1000; // 1h window
+      let windowStart = startMs;
+      while (windowStart <= endMs) {
+        const windowEnd = Math.min(windowStart + maxWindow - 1, endMs);
+        let from = windowStart;
+        while (from <= windowEnd) {
+          const url = `${apiBase}/fapi/v1/aggTrades?symbol=${symbol}&startTime=${from}&endTime=${windowEnd}&limit=1000`;
+          const res = await fetch(url);
+          await enforceRateLimitIfNeeded(res);
+          if (!res.ok) throw new Error(`REST aggTrades failed ${res.status}`);
+          const chunk = await res.json();
+          if (Array.isArray(chunk) && chunk.length > 0) {
+            for (const t of chunk) {
+              all.push({ id: t.a, price: Number(t.p), quantity: Number(t.q), time: t.T });
+            }
+            const lastTime = chunk[chunk.length - 1].T;
+            const nextFrom = lastTime + 1;
+            if (nextFrom <= windowEnd) {
+              from = nextFrom; // keep same windowEnd; continue paginating within window
+              await sleep(25);
+              continue;
+            } else {
+              break; // finished this window
+            }
+          } else {
+            break; // no more in this window
+          }
+        }
+        windowStart = windowEnd + 1;
+        await sleep(50);
+      }
+      return all;
+    }
+
+    async function loadAggTradesMerged(symbol, startMs, endMs) {
+      const dayList = daysBetweenInclusive(startMs, endMs);
+      const now = Date.now();
+      const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
+      const merged = [];
+      for (let i = 0; i < dayList.length; i++) {
+        const day = dayList[i];
+        setProgress(`Loading ${symbol} ${day} (${i + 1}/${dayList.length})`);
+        const dayStartMs = new Date(day + 'T00:00:00Z').getTime();
+        const dayEndMs = new Date(day + 'T23:59:59.999Z').getTime();
+        const clampStart = Math.max(startMs, dayStartMs);
+        const clampEnd = Math.min(endMs, dayEndMs);
+
+        const isOlderThanMonth = (now - dayStartMs) > oneMonthMs;
+        let usedS3 = false;
+        try {
+          const s3 = await s3LoadAggTradesForDay(symbol, day);
+          if (s3.ok) {
+            usedS3 = true;
+            // Filter to requested day slice (already per-day but just in case)
+            for (const t of s3.trades) {
+              if (t.time >= clampStart && t.time <= clampEnd) merged.push(t);
+            }
+          } else {
+            // S3 404
+            if (!isOlderThanMonth) {
+              const rest = await restLoadAggTrades(symbol, clampStart, clampEnd);
+              merged.push(...rest);
+            } else {
+              console.warn('S3 file missing and REST disabled for >1m old data:', symbol, day);
+            }
+          }
+        } catch (e) {
+          console.warn('S3 error, fallback if within last month', e);
+          if (!isOlderThanMonth) {
+            const rest = await restLoadAggTrades(symbol, clampStart, clampEnd);
+            merged.push(...rest);
+          } else {
+            setStatus(`${day}일 S3 오류, 1개월 초과 데이터는 REST 비활성화`, 'warn');
+          }
+        }
+      }
+
+      merged.sort((a, b) => a.time - b.time || (a.id ?? 0) - (b.id ?? 0));
+      setProgress('');
+      return merged;
+    }
+
+    async function loadKlinesBeforeReplay(symbol, replayStartMs) {
+      const endTime = replayStartMs - 1;
+      const url = `${apiBase}/fapi/v1/klines?symbol=${symbol}&interval=1m&endTime=${endTime}&limit=100`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`klines failed: ${res.status}`);
+      const arr = await res.json();
+      const candles = arr.map(k => ({
+        time: Math.floor(k[0] / 1000),
+        open: Number(k[1]),
+        high: Number(k[2]),
+        low: Number(k[3]),
+        close: Number(k[4])
+      }));
+      const volumes = arr.map(k => ({
+        time: Math.floor(k[0] / 1000),
+        value: Number(k[5]),
+        color: Number(k[4]) >= Number(k[1]) ? '#26a69a80' : '#ef535080' // 75% opacity
+      }));
+      return { candles, volumes };
+    }
+
+    // Chart setup
+    const chart = LightweightCharts.createChart(ui.chart, {
+      layout: { background: { color: '#0e1116' }, textColor: '#b8c1cc' },
+      rightPriceScale: { borderColor: '#2b3139' },
+      timeScale: { borderColor: '#2b3139', timeVisible: true, secondsVisible: true },
+      grid: {
+        vertLines: { color: '#21262d' },
+        horzLines: { color: '#21262d' },
+      },
+      crosshair: { mode: 0 },
+    });
+    const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderDownColor: '#ef5350',
+      borderUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+      wickUpColor: '#26a69a'
+    });
+    candleSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.1, bottom: 0.2 }
+    });
+    const volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceLineVisible: false,
+      priceScaleId: 'volume',
+      color: '#6a85b6BF' // 75% opacity
+    });
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+      borderColor: '#2b3139'
+    });
+
+    // Replay state
+    let loadedTrades = [];
+    let preCandles = [];
+    let preVolumes = [];
+    let aggregatedCandles = new Map(); // minuteSec -> candle
+    let aggregatedVolumes = new Map(); // minuteSec -> volume
+    let replay = {
+      running: false,
+      speed: 1,
+      idx: 0,
+      tradeT0: 0,
+      realT0: 0,
+      raf: 0,
+      lastMinuteSec: null,
+    };
+
+    function resetReplay() {
+      if (replay.raf) cancelAnimationFrame(replay.raf);
+      replay = { running: false, speed: Number(ui.speed.value || 1), idx: 0, tradeT0: 0, realT0: 0, raf: 0, lastMinuteSec: null };
+      aggregatedCandles.clear();
+      aggregatedVolumes.clear();
+      loadedTrades = []; // Clear previous trades data
+      // Keep pre data on chart
+      if (preCandles.length > 0) candleSeries.setData(preCandles);
+      if (preVolumes.length > 0) volumeSeries.setData(preVolumes);
+      chart.timeScale().fitContent();
+    }
+
+    function processTrade(t) {
+      const sec = Math.floor(t.time / 1000);
+      const minuteSec = Math.floor(sec / 60) * 60;
+      let c = aggregatedCandles.get(minuteSec);
+      if (!c) {
+        c = { time: minuteSec, open: t.price, high: t.price, low: t.price, close: t.price };
+        aggregatedCandles.set(minuteSec, c);
+      } else {
+        c.high = Math.max(c.high, t.price);
+        c.low = Math.min(c.low, t.price);
+        c.close = t.price;
+      }
+      // Update candlestick series for this minute
+      candleSeries.update(c);
+      // Update per-minute volume (sum of trade quantities)
+      const prevVol = aggregatedVolumes.get(minuteSec) || 0;
+      const nextVol = prevVol + (Number.isFinite(t.quantity) ? t.quantity : 0);
+      aggregatedVolumes.set(minuteSec, nextVol);
+      const volColor = c.close >= c.open ? '#26a69a80' : '#ef535080'; // 75% opacity
+      volumeSeries.update({ time: minuteSec, value: nextVol, color: volColor });
+      replay.lastMinuteSec = minuteSec;
+    }
+
+    function loop() {
+      if (!replay.running) return;
+      const now = performance.now();
+      const simTime = replay.tradeT0 + (now - replay.realT0) * replay.speed;
+      // Process up to N trades per frame to keep UI responsive
+      let processed = 0;
+      const maxPerFrame = 5000;
+      while (replay.idx < loadedTrades.length && loadedTrades[replay.idx].time <= simTime && processed < maxPerFrame) {
+        processTrade(loadedTrades[replay.idx]);
+        replay.idx++;
+        processed++;
+      }
+      setProgress(`${replay.idx}/${loadedTrades.length} 틱`);
+      if (replay.idx >= loadedTrades.length) {
+        setStatus('리플레이 완료');
+        replay.running = false;
+        return;
+      }
+      replay.raf = requestAnimationFrame(loop);
+    }
+
+    function startReplay() {
+      if (!loadedTrades.length) { setStatus('거래 데이터가 없음', 'warn'); return; }
+
+      // If already running, stop first
+      if (replay.running) {
+        replay.running = false;
+        if (replay.raf) cancelAnimationFrame(replay.raf);
+      }
+
+      replay.speed = Number(ui.speed.value || 1);
+      if (replay.idx === 0) {
+        replay.tradeT0 = loadedTrades[0].time;
+      } else {
+        // Continue from current trade time to keep timing consistent
+        replay.tradeT0 = loadedTrades[replay.idx].time;
+      }
+      replay.realT0 = performance.now();
+      replay.running = true;
+      setStatus('리플레이 중...');
+      replay.raf = requestAnimationFrame(loop);
+    }
+
+    function pauseReplay() {
+      replay.running = false;
+      if (replay.raf) cancelAnimationFrame(replay.raf);
+      setStatus('일시정지', 'warn');
+    }
+
+    async function handleLoad() {
+      try {
+        setStatus('검증 중...');
+        const symbol = ui.symbol.value;
+        const startMs = parseDateTimeInputToUtcMs(ui.start);
+        const endMs = parseDateTimeInputToUtcMs(ui.end);
+        if (!symbol) throw new Error('심볼을 선택하세요');
+        if (!startMs || !endMs || endMs < startMs) throw new Error('잘못된 시간 범위');
+
+        resetReplay();
+        setStatus('1분 차트 불러오는 중...');
+        const pre = await loadKlinesBeforeReplay(symbol, startMs);
+        preCandles = pre.candles;
+        preVolumes = pre.volumes;
+        candleSeries.setData(preCandles);
+        volumeSeries.setData(preVolumes);
+        setStatus('거래 데이터 불러오는 중...');
+        loadedTrades = await loadAggTradesMerged(symbol, startMs, endMs);
+        if (!loadedTrades.length) {
+          setStatus('해당 범위에 거래 데이터가 없음', 'warn');
+          return;
+        }
+        // Prepare replay state after loading
+        replay.idx = 0;
+        replay.tradeT0 = loadedTrades[0].time;
+        replay.running = false; // Ensure replay is not running
+
+        // Fit chart to show all loaded data
+        chart.timeScale().fitContent();
+        setStatus(`${loadedTrades.length}개 거래 데이터 불러옴. 재생 준비됨.`);
+      } catch (e) {
+        console.error(e);
+        setStatus(String(e.message || e), 'err');
+      }
+    }
+
+    // 시작시간 변경 시 끝시간을 자동으로 20분 뒤로 설정 및 로컬시간 표시 업데이트
+    ui.start.addEventListener('change', () => {
+      if (ui.start.value) {
+        ui.end.value = addMinutes(ui.start.value, 20);
+        updateLocalTimeDisplay(ui.start, ui.startLocal);
+        // 끝시간도 업데이트
+        setTimeout(() => { updateLocalTimeDisplay(ui.end, ui.endLocal); }, 0);
+      } else {
+        ui.startLocal.textContent = '';
+      }
+    });
+
+    // 종료시간 변경 시 로컬시간 표시 업데이트
+    ui.end.addEventListener('change', () => {
+      if (ui.end.value) {
+        updateLocalTimeDisplay(ui.end, ui.endLocal);
+      } else {
+        ui.endLocal.textContent = '';
+      }
+    });
+
+    ui.load.addEventListener('click', handleLoad);
+    ui.play.addEventListener('click', startReplay);
+    ui.pause.addEventListener('click', pauseReplay);
+    ui.speed.addEventListener('change', () => { replay.speed = Number(ui.speed.value || 1); });
+
+    // Initialize defaults
+    (async function init() {
+      try {
+        await fetchUSDTPerpSymbols();
+        // Defaults: symbol BTCUSDT, last 20 minutes
+        const now = new Date();
+        const twentyMinutesAgo = new Date(now.getTime() - 20 * 60 * 1000);
+
+        // Format to datetime-local format (YYYY-MM-DDTHH:mm)
+        ui.symbol.value = 'BTCUSDT';
+        ui.start.value = twentyMinutesAgo.toISOString().slice(0, 16);
+        ui.end.value = now.toISOString().slice(0, 16);
+        // 초기 로컬시간 표시 업데이트
+        updateLocalTimeDisplay(ui.start, ui.startLocal);
+        updateLocalTimeDisplay(ui.end, ui.endLocal);
+        setStatus('준비됨');
+      } catch (e) {
+        console.error(e);
+        setStatus('초기화 오류: ' + (e.message || e), 'err');
+      }
+    })();
+  </script>
+</body>
+</html>
+
+

@@ -1,6 +1,6 @@
-# vc-trashbin
+# vc
 
-주소 : [https://inyeoptti.github.io/vc-trashbin/](https://inyeoptti.github.io/vc-trashbin/)
+주소 : [https://inyeoptti.github.io/vc/](https://inyeoptti.github.io/vc/)
 
 - [watchlist.html](./watchlist.html) 코인 워치리스트 등록 / 캔들, 거래량, BB Width, OI, 펀딩비 확인 및 메모기능
 - [binance-futures-dashboard.html](./binance-futures-dashboard.html) 롱/숏 거래량, 비율 실시간 확인
@@ -12,3 +12,4 @@
 - [tpm-race-zscore.html](./tpm-race-zscore.html) 1분봉 기준 최근 100봉 대비 거래량 증가율 (Z-score) 상위 20위 + 상승률 표시
 - [force-race.html](./force-race.html) 최근 10분간 롱/숏 강제청산액
 - [bbw-spike-detector.html](./bbw-spike-detector.html) 1분봉 급등 알림, 볼린저 밴드 넓이 <= 0.02, 1%이상 상승시 
+- [tick-replay.html](./tick-replay.html) 과거 차트 틱 리플레이

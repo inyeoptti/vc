@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Binance Futures — All Symbol bookTicker Oscilloscope</title>
+  <style>
+    :root { --bg:#0b0c10; --box:#15171c; --text:#e8e8e8; --muted:#9aa0a6; --ask:#e94b4b; --bid:#22c55e; --grid:#5f6368; }
+    * { box-sizing: border-box }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji }
+    /* Requirement: whole page has only a flex container of the boxes */
+    .wrap { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px }
+    .box { background: var(--box); border: 1px solid #23262d; border-radius: 10px; width: 260px; padding: 8px; display: flex; flex-direction: column; gap: 6px }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:8px }
+    .sym { font-weight: 700; letter-spacing: .5px }
+    .legend { display:flex; gap:10px; font-size:12px; color: var(--muted) }
+    .dot { width:9px; height:9px; border-radius: 50% }
+    canvas { width: 244px; height: 64px; display:block; background: transparent }
+    .tiny { font-size: 11px; color: var(--muted) }
+  </style>
+    <!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-1DQYSZQPZ0"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-1DQYSZQPZ0');
+</script>
+</head>
+<body>
+  <div id="wrap" class="wrap"></div>
+
+<script>
+(async function(){
+  const REST_BASE = 'https://fapi.binance.com';
+  const WS_BASE = 'wss://fstream.binance.com/stream?streams=!bookTicker'; // single connection for all symbols
+  const TIME_WINDOW_MS = 60_000; // 60s window
+  const DPR = Math.max(1, window.devicePixelRatio || 1);
+
+  // state per symbol
+  const symbols = [];            // list of symbol strings
+  const charts = new Map();      // symbol -> chart state
+  const updatedSet = new Set();  // symbols updated since last draw
+
+  function createBox(symbol){
+    const box = document.createElement('div');
+    box.className = 'box';
+
+    const top = document.createElement('div');
+    top.className = 'row';
+    const name = document.createElement('div');
+    name.className = 'sym';
+    name.textContent = symbol;
+
+    const legend = document.createElement('div');
+    legend.className = 'legend';
+    legend.innerHTML = `
+      <span class="row" style="gap:6px"><span class="dot" style="background: var(--bid)"></span>b</span>
+      <span class="row" style="gap:6px"><span class="dot" style="background: var(--ask)"></span>a</span>
+    `;
+
+    top.appendChild(name);
+    top.appendChild(legend);
+
+    const canvas = document.createElement('canvas');
+    // set backing store size using DPR for crisp 1px lines
+    const cssW = 244, cssH = 64;
+    canvas.width = Math.floor(cssW * DPR);
+    canvas.height = Math.floor(cssH * DPR);
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+
+    const info = document.createElement('div');
+    info.className = 'tiny';
+    info.textContent = '—';
+
+    box.appendChild(top);
+    box.appendChild(canvas);
+    box.appendChild(info);
+
+    document.getElementById('wrap').appendChild(box);
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(DPR, DPR);
+
+    const state = { canvas, ctx, w: cssW, h: cssH, points: [], lastSecond: 0, infoEl: info };
+    charts.set(symbol, state);
+  }
+
+  function pruneOld(state, now){
+    const cutoff = now - TIME_WINDOW_MS;
+    // points: array of {t,b,a}
+    let i = 0; while (i < state.points.length && state.points[i].t < cutoff) i++;
+    if (i>0) state.points.splice(0, i);
+  }
+
+  function draw(state){
+    const { ctx, w, h, points } = state;
+    ctx.clearRect(0,0,w,h);
+    if (points.length === 0) return;
+
+    const now = Date.now();
+    pruneOld(state, now);
+
+    const t0 = now - TIME_WINDOW_MS;
+    // compute min/max over window using small scan
+    let minP = Infinity, maxP = -Infinity;
+    for (const p of points){
+      if (p.b < minP) minP = p.b; if (p.a < minP) minP = p.a;
+      if (p.b > maxP) maxP = p.b; if (p.a > maxP) maxP = p.a;
+    }
+    if (!isFinite(minP) || !isFinite(maxP) || maxP === minP){
+      minP = points[points.length-1].b * 0.9995;
+      maxP = points[points.length-1].a * 1.0005;
+    }
+    const pad = (maxP - minP) * 0.1 || 1e-9;
+    const yMin = minP - pad, yMax = maxP + pad;
+    const xOf = (t)=> ( (t - t0) / TIME_WINDOW_MS ) * w;
+    const yOf = (price)=> h - ( (price - yMin) / (yMax - yMin) ) * h;
+
+    // vertical grid lines each second
+    const startSec = Math.floor(t0 / 1000) * 1000;
+    ctx.lineWidth = 1; ctx.strokeStyle = '#5f6368AA';
+    for (let t = startSec; t <= now; t += 1000){
+      const x = Math.round(xOf(t)) + 0.5; // pixel-align
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    }
+
+    // draw bid & ask as simple 1px lines connecting last samples
+    function drawLine(key, color){
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath();
+      let started = false;
+      for (const p of points){
+        const x = xOf(p.t), y = yOf(p[key]);
+        if (!started){ ctx.moveTo(x, y); started = true; }
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    drawLine('b', getComputedStyle(document.documentElement).getPropertyValue('--bid').trim() || '#22c55e');
+    drawLine('a', getComputedStyle(document.documentElement).getPropertyValue('--ask').trim() || '#e94b4b');
+  }
+
+  function scheduleRender(){
+    // modest global render loop ~10fps
+    if (scheduleRender._raf) return;
+    const loop = () => {
+      scheduleRender._raf = null;
+      if (updatedSet.size === 0) return; // nothing changed
+      for (const sym of updatedSet){
+        const st = charts.get(sym);
+        if (st) draw(st);
+      }
+      updatedSet.clear();
+    };
+    scheduleRender._raf = requestAnimationFrame(loop);
+  }
+
+  // Load symbols from exchangeInfo (TRADING only)
+  let res;
+  try {
+    res = await fetch(REST_BASE + '/fapi/v1/exchangeInfo');
+    if (!res.ok) throw new Error('exchangeInfo HTTP ' + res.status);
+  } catch (e){
+    alert('Failed to fetch exchangeInfo: ' + e.message);
+    return;
+  }
+  const data = await res.json();
+  for (const s of data.symbols){
+    if (s.status === 'TRADING'){ symbols.push(s.symbol); createBox(s.symbol); }
+  }
+
+  // WebSocket: single stream for all symbols
+  let ws;
+  function connect(){
+    ws = new WebSocket(WS_BASE);
+    ws.onopen = () => console.log('WS open');
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        const d = msg.data || msg; // support raw or combined payloads
+        const sym = d.s || d.symbol;
+        const b = parseFloat(d.b || d.bestBidPrice || d.bidPrice);
+        const a = parseFloat(d.a || d.bestAskPrice || d.askPrice);
+        if (!sym || !Number.isFinite(b) || !Number.isFinite(a)) return;
+        const st = charts.get(sym);
+        if (!st) return; // ignore non-TRADING
+        const t = (d.E || d.T || Date.now());
+        st.points.push({ t, b, a });
+        st.infoEl.textContent = `b ${b}  |  a ${a}`;
+        updatedSet.add(sym);
+        scheduleRender();
+      } catch (e){ /* ignore */ }
+    };
+    ws.onclose = () => { console.warn('WS closed, reconnecting in 2s'); setTimeout(connect, 2000); };
+    ws.onerror = () => { try { ws.close(); } catch {} };
+  }
+  connect();
+
+  // Also tick every second to draw the new vertical line even if no updates
+  setInterval(() => {
+    for (const [sym, st] of charts){ updatedSet.add(sym); }
+    scheduleRender();
+  }, 1000);
+})();
+</script>
+</body>
+</html>
